@@ -1,6 +1,6 @@
-# Overview
+# `once_cell_no_std`
 
-`once_cell_no_std` provides a `no_std` `OnceCell` type that implements `Sync` and can be used in
+The `once_cell_no_std` crate provides a `no_std` `OnceCell` type that implements `Sync` and can be used in
 statics. It does _not_ use spinlocks or any other form of blocking. Instead, concurrent
 initialization is reported as an explicit `ConcurrentInitialization` error that the caller can
 handle as it likes.
@@ -22,7 +22,7 @@ or `MutexGuard<T>`.
 
 More patterns and use-cases are in the [docs](https://docs.rs/once_cell_no_std/)!
 
-# Related crates
+## Related crates
 
 This crate was forked from the great
 [`once_cell` crate](https://docs.rs/once_cell/1.21.3/once_cell/). The original `once_cell` crate
