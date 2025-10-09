@@ -1,5 +1,4 @@
 use std::{
-    path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Barrier,
