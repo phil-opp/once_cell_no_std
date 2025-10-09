@@ -30,7 +30,7 @@ provides two flavors of `OnceCell` types: [`unsync::OnceCell`][unsync-once-cell]
 [`sync::OnceCell`][sync-once-cell]. The following
 table compares the types against `once_cell_no_std::OnceCell`:
 
-|                                    | `once_cell_no_std::OnceCell`              | [`once_cell::sync::OnceCell`][sync-once-cell]                                                                       | [`once_cell::unsync::OnceCell`][unsync-once-cell] |
+|                                    | `OnceCell` (this crate)                   | [`once_cell::sync::OnceCell`][sync-once-cell]                                                                       | [`once_cell::unsync::OnceCell`][unsync-once-cell] |
 | ---------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | implements `Sync`                  | yes                                       | yes                                                                                                                 | no                                                |
 | concurrent initialization leads to | `ConcurrentInitialization` error returned | thread blocked                                                                                                      | cannot happen                                     |
@@ -39,7 +39,7 @@ table compares the types against `once_cell_no_std::OnceCell`:
 Parts of `once_cell` API are included into `std`/`core` [as of Rust 1.70.0](https://github.com/rust-lang/rust/pull/105587).
 The following table compares `once_cell_no_std::OnceCell` against the [`core::cell::OnceCell`] and [`std::sync::OnceLock`] types:
 
-|                                    | `once_cell_no_std::OnceCell`              | [`std::sync::OnceLock`] | [`core::cell::OnceCell`] |
+|                                    | `OnceCell` (this crate)                   | [`std::sync::OnceLock`] | [`core::cell::OnceCell`] |
 | ---------------------------------- | ----------------------------------------- | ----------------------- | ------------------------ |
 | implements `Sync`                  | yes                                       | yes                     | no                       |
 | concurrent initialization leads to | `ConcurrentInitialization` error returned | thread blocked          | cannot happen            |
