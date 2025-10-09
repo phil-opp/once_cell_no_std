@@ -7,7 +7,9 @@
 //! end.
 //! All threads should end up with the same result.
 
-use once_cell::sync::OnceCell;
+use std::hint::spin_loop;
+
+use once_cell_no_std::{error::ConcurrentInitialization, OnceCell};
 
 const N_THREADS: usize = 32;
 const N_ROUNDS: usize = 1_000_000;
@@ -17,7 +19,7 @@ static RESULT: OnceCell<usize> = OnceCell::new();
 
 fn main() {
     let start = std::time::Instant::now();
-    CELLS.get_or_init(|| vec![OnceCell::new(); N_ROUNDS]);
+    CELLS.get_or_init(|| vec![OnceCell::new(); N_ROUNDS]).unwrap();
     let threads =
         (0..N_THREADS).map(|i| std::thread::spawn(move || thread_main(i))).collect::<Vec<_>>();
     for thread in threads {
@@ -27,12 +29,28 @@ fn main() {
     println!("No races detected");
 }
 
+#[allow(clippy::single_match)]
 fn thread_main(i: usize) {
     let cells = CELLS.get().unwrap();
     let mut accum = 0;
     for cell in cells.iter() {
-        let &value = cell.get_or_init(|| i);
+        let &value = loop {
+            match cell.get_or_init(|| i) {
+                Ok(value) => break value,
+                Err(ConcurrentInitialization) => {
+                    spin_loop(); // retry
+                }
+            }
+        };
         accum += value;
     }
-    assert_eq!(RESULT.get_or_init(|| accum), &accum);
+    let result = loop {
+        match RESULT.get_or_init(|| accum) {
+            Ok(value) => break value,
+            Err(ConcurrentInitialization) => {
+                spin_loop(); // retry
+            }
+        }
+    };
+    assert_eq!(result, &accum);
 }

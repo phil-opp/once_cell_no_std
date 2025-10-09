@@ -2,7 +2,7 @@
 //! We do some other operations that write to memory to get an imprecise but somewhat realistic
 //! measurement.
 
-use once_cell::sync::OnceCell;
+use once_cell_no_std::OnceCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const N_THREADS: usize = 16;
@@ -30,7 +30,7 @@ fn thread_main(i: usize) {
     let mut accum = 0usize;
     for _ in 0..N_ROUNDS {
         let _value = CELL.get_or_init(|| i + 1);
-        let k = OTHER.fetch_add(data[accum & 0x7F] as usize, Ordering::Relaxed);
+        let k = OTHER.fetch_add(data[accum & 0x7F], Ordering::Relaxed);
         for j in data.iter_mut() {
             *j = (*j).wrapping_add(accum);
             accum = accum.wrapping_add(k);

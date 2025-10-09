@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use once_cell::sync::OnceCell;
+use once_cell_no_std::OnceCell;
 
 const N_THREADS: usize = 32;
 const N_ROUNDS: usize = 100_000_000;
@@ -22,7 +22,7 @@ fn main() {
 
 fn thread_main(i: usize) {
     for _ in 0..N_ROUNDS {
-        let &value = CELL.get_or_init(|| i);
+        let &value = CELL.get_or_init(|| i).unwrap();
         assert!(value < N_THREADS)
     }
 }

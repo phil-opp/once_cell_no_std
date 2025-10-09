@@ -1,15 +1,13 @@
 use std::{
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    path::Path,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Barrier,
+    },
     thread::scope,
 };
 
-#[cfg(feature = "std")]
-use std::sync::Barrier;
-
-#[cfg(not(feature = "std"))]
-use core::cell::Cell;
-
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell_no_std::OnceCell;
 
 #[test]
 fn once_cell() {
@@ -17,11 +15,11 @@ fn once_cell() {
     assert!(c.get().is_none());
     scope(|s| {
         s.spawn(|| {
-            c.get_or_init(|| 92);
+            c.get_or_init(|| 92).unwrap();
             assert_eq!(c.get(), Some(&92));
         });
     });
-    c.get_or_init(|| panic!("Kabom!"));
+    c.get_or_init(|| panic!("Kabom!")).unwrap();
     assert_eq!(c.get(), Some(&92));
 }
 
@@ -35,7 +33,7 @@ fn once_cell_with_value() {
 fn once_cell_get_mut() {
     let mut c = OnceCell::new();
     assert!(c.get_mut().is_none());
-    c.set(90).unwrap();
+    c.set(90).unwrap().unwrap();
     *c.get_mut().unwrap() += 2;
     assert_eq!(c.get_mut(), Some(&mut 92));
 }
@@ -43,7 +41,7 @@ fn once_cell_get_mut() {
 #[test]
 fn once_cell_get_unchecked() {
     let c = OnceCell::new();
-    c.set(92).unwrap();
+    c.set(92).unwrap().unwrap();
     unsafe {
         assert_eq!(c.get_unchecked(), &92);
     }
@@ -62,7 +60,7 @@ fn once_cell_drop() {
     let x = OnceCell::new();
     scope(|s| {
         s.spawn(|| {
-            x.get_or_init(|| Dropper);
+            x.get_or_init(|| Dropper).unwrap();
             assert_eq!(DROP_CNT.load(SeqCst), 0);
             drop(x);
         });
@@ -82,7 +80,7 @@ fn clone() {
     let c = s.clone();
     assert!(c.get().is_none());
 
-    s.set("hello".to_string()).unwrap();
+    s.set("hello".to_string()).unwrap().unwrap();
     let c = s.clone();
     assert_eq!(c.get().map(String::as_str), Some("hello"));
 }
@@ -96,43 +94,13 @@ fn get_or_try_init() {
     assert!(res.is_err());
     assert!(cell.get().is_none());
 
-    assert_eq!(cell.get_or_try_init(|| Err(())), Err(()));
+    assert_eq!(cell.get_or_try_init(|| Err(())).unwrap(), Err(()));
 
-    assert_eq!(cell.get_or_try_init(|| Ok::<_, ()>("hello".to_string())), Ok(&"hello".to_string()));
+    assert_eq!(
+        cell.get_or_try_init(|| Ok::<_, ()>("hello".to_string())).unwrap(),
+        Ok(&"hello".to_string())
+    );
     assert_eq!(cell.get(), Some(&"hello".to_string()));
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn wait() {
-    let cell: OnceCell<String> = OnceCell::new();
-    scope(|s| {
-        s.spawn(|| cell.set("hello".to_string()));
-        let greeting = cell.wait();
-        assert_eq!(greeting, "hello")
-    });
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn get_or_init_stress() {
-    let n_threads = if cfg!(miri) { 30 } else { 1_000 };
-    let n_cells = if cfg!(miri) { 30 } else { 1_000 };
-    let cells: Vec<_> = std::iter::repeat_with(|| (Barrier::new(n_threads), OnceCell::new()))
-        .take(n_cells)
-        .collect();
-    scope(|s| {
-        for t in 0..n_threads {
-            let cells = &cells;
-            s.spawn(move || {
-                for (i, (b, s)) in cells.iter().enumerate() {
-                    b.wait();
-                    let j = if t % 2 == 0 { s.wait() } else { s.get_or_init(|| i) };
-                    assert_eq!(*j, i);
-                }
-            });
-        }
-    });
 }
 
 #[test]
@@ -155,7 +123,7 @@ fn into_inner() {
     let cell: OnceCell<String> = OnceCell::new();
     assert_eq!(cell.into_inner(), None);
     let cell = OnceCell::new();
-    cell.set("hello".to_string()).unwrap();
+    cell.set("hello".to_string()).unwrap().unwrap();
     assert_eq!(cell.into_inner(), Some("hello".to_string()));
 }
 
@@ -163,7 +131,7 @@ fn into_inner() {
 fn debug_impl() {
     let cell = OnceCell::new();
     assert_eq!(format!("{:#?}", cell), "OnceCell(Uninit)");
-    cell.set(vec!["hello", "world"]).unwrap();
+    cell.set(vec!["hello", "world"]).unwrap().unwrap();
     assert_eq!(
         format!("{:#?}", cell),
         r#"OnceCell(
@@ -176,46 +144,18 @@ fn debug_impl() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)] // miri doesn't support processes
-#[cfg(feature = "std")]
-fn reentrant_init() {
-    let examples_dir = {
-        let mut exe = std::env::current_exe().unwrap();
-        exe.pop();
-        exe.pop();
-        exe.push("examples");
-        exe
-    };
-    let bin = examples_dir
-        .join("reentrant_init_deadlocks")
-        .with_extension(std::env::consts::EXE_EXTENSION);
-    let mut guard = Guard { child: std::process::Command::new(bin).spawn().unwrap() };
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    let status = guard.child.try_wait().unwrap();
-    assert!(status.is_none());
+#[should_panic(expected = "concurrent initialization detected: ConcurrentInitialization")]
+fn reentrant_init_no_std() {
+    use std::cell::Cell;
 
-    struct Guard {
-        child: std::process::Child,
-    }
-
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            let _ = self.child.kill();
-        }
-    }
-}
-
-#[cfg(not(feature = "std"))]
-#[test]
-#[should_panic(expected = "reentrant init")]
-fn reentrant_init() {
     let x: OnceCell<Box<i32>> = OnceCell::new();
     let dangling_ref: Cell<Option<&i32>> = Cell::new(None);
     x.get_or_init(|| {
-        let r = x.get_or_init(|| Box::new(92));
+        let r = x.get_or_init(|| Box::new(92)).expect("concurrent initialization detected");
         dangling_ref.set(Some(r));
         Box::new(62)
-    });
+    })
+    .unwrap();
     eprintln!("use after free: {:?}", dangling_ref.get().unwrap());
 }
 
@@ -229,7 +169,7 @@ fn eval_once_macro() {
             fn init() -> $ty {
                 $($body)*
             }
-            ONCE_CELL.get_or_init(init)
+            ONCE_CELL.get_or_init(init).unwrap()
         }};
     }
 
@@ -271,7 +211,6 @@ fn once_cell_does_not_leak_partially_constructed_boxes() {
     }
 }
 
-#[cfg(feature = "std")]
 #[test]
 fn get_does_not_block() {
     let cell = OnceCell::new();
@@ -282,7 +221,8 @@ fn get_does_not_block() {
                 barrier.wait();
                 barrier.wait();
                 "hello".to_string()
-            });
+            })
+            .unwrap();
         });
         barrier.wait();
         assert_eq!(cell.get(), None);
@@ -297,7 +237,7 @@ fn arrrrrrrrrrrrrrrrrrrrrr() {
     let cell = OnceCell::new();
     {
         let s = String::new();
-        cell.set(&s).unwrap();
+        cell.set(&s).unwrap().unwrap();
     }
 }
 
@@ -305,5 +245,4 @@ fn arrrrrrrrrrrrrrrrrrrrrr() {
 fn once_cell_is_sync_send() {
     fn assert_traits<T: Send + Sync>() {}
     assert_traits::<OnceCell<String>>();
-    assert_traits::<Lazy<String>>();
 }

@@ -1,8 +1,10 @@
-use std::{
+use core::{
     cell::UnsafeCell,
     panic::{RefUnwindSafe, UnwindSafe},
     sync::atomic::{AtomicU8, Ordering},
 };
+
+use crate::error::ConcurrentInitialization;
 
 pub(crate) struct OnceCell<T> {
     state: AtomicU8,
@@ -42,14 +44,17 @@ impl<T> OnceCell<T> {
     /// Safety: synchronizes with store to value via `is_initialized` or mutex
     /// lock/unlock, writes value only once because of the mutex.
     #[cold]
-    pub(crate) fn initialize<F, E>(&self, f: F) -> Result<(), E>
+    pub(crate) fn try_initialize<F, E>(
+        &self,
+        f: F,
+    ) -> Result<Result<(), E>, ConcurrentInitialization>
     where
         F: FnOnce() -> Result<T, E>,
     {
         let mut f = Some(f);
         let mut res: Result<(), E> = Ok(());
         let slot: *mut Option<T> = self.value.get();
-        initialize_inner(&self.state, &mut || {
+        try_initialize_inner(&self.state, &mut || {
             // We are calling user-supplied function and need to be careful.
             // - if it returns Err, we unlock mutex and return without touching anything
             // - if it panics, we unlock mutex and propagate panic without touching anything
@@ -72,23 +77,8 @@ impl<T> OnceCell<T> {
                     false
                 }
             }
-        });
-        res
-    }
-
-    #[cold]
-    pub(crate) fn wait(&self) {
-        let key = &self.state as *const _ as usize;
-        unsafe {
-            parking_lot_core::park(
-                key,
-                || self.state.load(Ordering::Acquire) != COMPLETE,
-                || (),
-                |_, _| (),
-                parking_lot_core::DEFAULT_PARK_TOKEN,
-                None,
-            );
-        }
+        })?;
+        Ok(res)
     }
 
     /// Get the reference to the underlying value, without checking if the cell
@@ -127,16 +117,20 @@ struct Guard<'a> {
 impl<'a> Drop for Guard<'a> {
     fn drop(&mut self) {
         self.state.store(self.new_state, Ordering::Release);
-        unsafe {
-            let key = self.state as *const AtomicU8 as usize;
-            parking_lot_core::unpark_all(key, parking_lot_core::DEFAULT_UNPARK_TOKEN);
-        }
     }
 }
 
 // Note: this is intentionally monomorphic
+/// Tries to run the given `init` function, returns `Err(ConcurrentInitialization)` when there is a
+/// concurrent init function running.
+///
+/// If the `state` is already `COMPLETE` (i.e. already initialized), the given `init` function is
+/// _not_ executed and `Ok(())` is returned directly.
 #[inline(never)]
-fn initialize_inner(state: &AtomicU8, init: &mut dyn FnMut() -> bool) {
+fn try_initialize_inner(
+    state: &AtomicU8,
+    init: &mut dyn FnMut() -> bool,
+) -> Result<(), ConcurrentInitialization> {
     loop {
         let exchange =
             state.compare_exchange_weak(INCOMPLETE, RUNNING, Ordering::Acquire, Ordering::Acquire);
@@ -146,20 +140,10 @@ fn initialize_inner(state: &AtomicU8, init: &mut dyn FnMut() -> bool) {
                 if init() {
                     guard.new_state = COMPLETE;
                 }
-                return;
+                return Ok(());
             }
-            Err(COMPLETE) => return,
-            Err(RUNNING) => unsafe {
-                let key = state as *const AtomicU8 as usize;
-                parking_lot_core::park(
-                    key,
-                    || state.load(Ordering::Relaxed) == RUNNING,
-                    || (),
-                    |_, _| (),
-                    parking_lot_core::DEFAULT_PARK_TOKEN,
-                    None,
-                );
-            },
+            Err(COMPLETE) => return Ok(()),
+            Err(RUNNING) => return Err(ConcurrentInitialization),
             Err(INCOMPLETE) => (),
             Err(_) => debug_assert!(false),
         }
@@ -168,7 +152,7 @@ fn initialize_inner(state: &AtomicU8, init: &mut dyn FnMut() -> bool) {
 
 #[test]
 fn test_size() {
-    use std::mem::size_of;
+    use core::mem::size_of;
 
-    assert_eq!(size_of::<OnceCell<bool>>(), 1 * size_of::<bool>() + size_of::<u8>());
+    assert_eq!(size_of::<OnceCell<bool>>(), size_of::<bool>() + size_of::<u8>());
 }
