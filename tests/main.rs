@@ -6,7 +6,7 @@ use std::{
     thread::scope,
 };
 
-use once_cell_no_std::OnceCell;
+use once_cell_no_std::{error::GetError, OnceCell};
 
 #[test]
 fn once_cell() {
@@ -228,6 +228,38 @@ fn get_does_not_block() {
         barrier.wait();
     });
     assert_eq!(cell.get(), Some(&"hello".to_string()));
+}
+
+#[test]
+fn try_get_reports_reason() {
+    let cell = OnceCell::new();
+    let barrier = Barrier::new(2);
+    assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                "hello".to_string()
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        assert_eq!(cell.try_get(), Err(GetError::ConcurrentInitialization));
+        barrier.wait();
+    });
+    assert_eq!(cell.try_get(), Ok(&"hello".to_string()));
+}
+
+#[test]
+fn try_get_after_failed_init() {
+    let cell: OnceCell<String> = OnceCell::new();
+    assert_eq!(cell.get_or_try_init(|| Err(())).unwrap(), Err(()));
+    assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+
+    let res = std::panic::catch_unwind(|| cell.get_or_try_init(|| -> Result<_, ()> { panic!() }));
+    assert!(res.is_err());
+    assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
 }
 
 #[test]

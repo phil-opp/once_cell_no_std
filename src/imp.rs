@@ -4,7 +4,7 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
-use crate::error::ConcurrentInitialization;
+use crate::error::{ConcurrentInitialization, GetError};
 
 pub(crate) struct OnceCell<T> {
     state: AtomicU8,
@@ -39,6 +39,19 @@ impl<T> OnceCell<T> {
     #[inline]
     pub(crate) fn is_initialized(&self) -> bool {
         self.state.load(Ordering::Acquire) == COMPLETE
+    }
+
+    /// Like [`is_initialized`](Self::is_initialized), but reports _why_ the cell is not
+    /// initialized.
+    ///
+    /// Safety: synchronizes with store to value via Release/Acquire.
+    #[inline]
+    pub(crate) fn check_initialized(&self) -> Result<(), GetError> {
+        match self.state.load(Ordering::Acquire) {
+            COMPLETE => Ok(()),
+            RUNNING => Err(GetError::ConcurrentInitialization),
+            _ => Err(GetError::Uninitialized),
+        }
     }
 
     /// Safety: synchronizes with store to value via `is_initialized` or mutex

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add `OnceCell::try_get`, which distinguishes an empty cell from a concurrently initializing one
+  through the new `error::GetError` type
+
 ## 0.1.1
 
 - Remove unused dependencies
