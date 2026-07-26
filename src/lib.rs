@@ -307,6 +307,9 @@ impl<T> OnceCell<T> {
     /// Both error variants give `value` back to the caller, so that it can be reused, e.g. to
     /// retry after a concurrent initialization has finished.
     ///
+    /// Use [`insert`](Self::insert) if you also need a reference to the value that ends up in the
+    /// cell.
+    ///
     /// # Example
     ///
     /// ```
@@ -326,13 +329,18 @@ impl<T> OnceCell<T> {
     /// }
     /// ```
     pub fn set(&self, value: T) -> Result<(), SetError<T>> {
-        match self.try_insert(value) {
+        match self.insert(value) {
             Ok(_) => Ok(()),
             Err(error) => Err(error.into()),
         }
     }
 
     /// Like [`set`](Self::set), but also returns a reference to the final cell value.
+    ///
+    /// This method fails in the same cases as [`set`](Self::set), and its [`InsertError`] hands
+    /// `value` back in the same way. The difference is that the error additionally contains a
+    /// reference to the value stored in the cell, which ties it to the borrow of `self`. Use
+    /// [`set`](Self::set) if you need an error that can be propagated independently of the cell.
     ///
     /// # Example
     ///
@@ -342,15 +350,15 @@ impl<T> OnceCell<T> {
     /// let cell = OnceCell::new();
     /// assert!(cell.get().is_none());
     ///
-    /// assert_eq!(cell.try_insert(92), Ok(&92));
+    /// assert_eq!(cell.insert(92), Ok(&92));
     /// assert_eq!(
-    ///     cell.try_insert(62),
+    ///     cell.insert(62),
     ///     Err(InsertError::AlreadyInitialized { stored: &92, value: 62 })
     /// );
     ///
     /// assert!(cell.get().is_some());
     /// ```
-    pub fn try_insert(&self, value: T) -> Result<&T, InsertError<'_, T>> {
+    pub fn insert(&self, value: T) -> Result<&T, InsertError<'_, T>> {
         let mut value = Some(value);
         let res = match self.get_or_init(|| unsafe { value.take().unwrap_unchecked() }) {
             Ok(res) => res,
@@ -444,7 +452,7 @@ impl<T> OnceCell<T> {
     /// ```
     ///
     /// Note that this is only needed for resources that cannot be recreated. If the value itself
-    /// already exists, prefer [`set`](Self::set) or [`try_insert`](Self::try_insert), whose errors
+    /// already exists, prefer [`set`](Self::set) or [`insert`](Self::insert), whose errors
     /// hand it back directly.
     ///
     /// # Panics

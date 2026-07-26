@@ -6,6 +6,9 @@
   now returns `Result<&T, InsertError<'_, T>>`. Both error types hand the value that was not
   written back to the caller. Previously the value was silently dropped when the call failed with
   a `ConcurrentInitialization` error, which made it impossible to retry.
+- **Breaking:** `OnceCell::try_insert` was renamed to `OnceCell::insert`. The `try_` prefix no
+  longer carried any information, since the method is fallible in exactly the same cases as
+  `set`.
 - **Breaking:** `OnceCell::get_or_try_init` now returns `Result<&T, InitError<E>>` instead of the
   nested `Result<Result<&T, E>, ConcurrentInitialization>`. The new `error::InitError` type keeps
   the two failure reasons apart, but composes with the `?` operator.
