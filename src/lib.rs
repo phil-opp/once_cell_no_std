@@ -150,9 +150,10 @@ impl<T> Default for OnceCell<T> {
 
 impl<T: fmt::Debug> fmt::Debug for OnceCell<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.get() {
-            Some(v) => f.debug_tuple("OnceCell").field(v).finish(),
-            None => f.write_str("OnceCell(Uninit)"),
+        match self.try_get() {
+            Ok(v) => f.debug_tuple("OnceCell").field(v).finish(),
+            Err(GetError::Uninitialized) => f.write_str("OnceCell(Uninit)"),
+            Err(GetError::ConcurrentInitialization) => f.write_str("OnceCell(Initializing)"),
         }
     }
 }
