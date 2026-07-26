@@ -14,6 +14,7 @@
   CI job now verifies the MSRV.
 - Add `OnceCell::try_get`, which distinguishes an empty cell from a concurrently initializing one
   through the new `error::GetError` type
+- Add `OnceCell::is_initialized` to check the cell state without borrowing the value
 
 ## 0.1.1
 
