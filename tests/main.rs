@@ -6,7 +6,10 @@ use std::{
     thread::scope,
 };
 
-use once_cell_no_std::{error::GetError, OnceCell};
+use once_cell_no_std::{
+    error::{GetError, InsertError, SetError},
+    OnceCell,
+};
 
 #[test]
 fn once_cell() {
@@ -32,7 +35,7 @@ fn once_cell_with_value() {
 fn once_cell_get_mut() {
     let mut c = OnceCell::new();
     assert!(c.get_mut().is_none());
-    c.set(90).unwrap().unwrap();
+    c.set(90).unwrap();
     *c.get_mut().unwrap() += 2;
     assert_eq!(c.get_mut(), Some(&mut 92));
 }
@@ -40,7 +43,7 @@ fn once_cell_get_mut() {
 #[test]
 fn once_cell_get_unchecked() {
     let c = OnceCell::new();
-    c.set(92).unwrap().unwrap();
+    c.set(92).unwrap();
     unsafe {
         assert_eq!(c.get_unchecked(), &92);
     }
@@ -79,7 +82,7 @@ fn clone() {
     let c = s.clone();
     assert!(c.get().is_none());
 
-    s.set("hello".to_string()).unwrap().unwrap();
+    s.set("hello".to_string()).unwrap();
     let c = s.clone();
     assert_eq!(c.get().map(String::as_str), Some("hello"));
 }
@@ -122,7 +125,7 @@ fn into_inner() {
     let cell: OnceCell<String> = OnceCell::new();
     assert_eq!(cell.into_inner(), None);
     let cell = OnceCell::new();
-    cell.set("hello".to_string()).unwrap().unwrap();
+    cell.set("hello".to_string()).unwrap();
     assert_eq!(cell.into_inner(), Some("hello".to_string()));
 }
 
@@ -130,7 +133,7 @@ fn into_inner() {
 fn debug_impl() {
     let cell = OnceCell::new();
     assert_eq!(format!("{:#?}", cell), "OnceCell(Uninit)");
-    cell.set(vec!["hello", "world"]).unwrap().unwrap();
+    cell.set(vec!["hello", "world"]).unwrap();
     assert_eq!(
         format!("{:#?}", cell),
         r#"OnceCell(
@@ -263,12 +266,97 @@ fn try_get_after_failed_init() {
 }
 
 #[test]
+fn set_hands_the_value_back_on_error() {
+    let cell = OnceCell::new();
+    let barrier = Barrier::new(2);
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                "hello".to_string()
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        let err = cell.set("world".to_string()).unwrap_err();
+        assert_eq!(err, SetError::ConcurrentInitialization("world".to_string()));
+        assert_eq!(err.into_inner(), "world");
+        barrier.wait();
+    });
+    let err = cell.set("world".to_string()).unwrap_err();
+    assert_eq!(err, SetError::AlreadyInitialized("world".to_string()));
+    assert_eq!(err.into_inner(), "world");
+    assert_eq!(cell.get(), Some(&"hello".to_string()));
+}
+
+#[test]
+fn try_insert_hands_the_value_back_on_error() {
+    let cell = OnceCell::new();
+    let barrier = Barrier::new(2);
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                "hello".to_string()
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        let err = cell.try_insert("world".to_string()).unwrap_err();
+        assert_eq!(err, InsertError::ConcurrentInitialization("world".to_string()));
+        assert_eq!(err.into_inner(), "world");
+        barrier.wait();
+    });
+    let err = cell.try_insert("world".to_string()).unwrap_err();
+    assert_eq!(
+        err,
+        InsertError::AlreadyInitialized {
+            stored: &"hello".to_string(),
+            value: "world".to_string()
+        }
+    );
+    assert_eq!(err.into_inner(), "world");
+}
+
+#[test]
+fn concurrent_set_does_not_drop_the_value() {
+    static DROP_CNT: AtomicUsize = AtomicUsize::new(0);
+    struct Dropper;
+    impl Drop for Dropper {
+        fn drop(&mut self) {
+            DROP_CNT.fetch_add(1, SeqCst);
+        }
+    }
+
+    let cell = OnceCell::new();
+    let barrier = Barrier::new(2);
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                Dropper
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        let value = cell.set(Dropper).unwrap_err().into_inner();
+        assert_eq!(DROP_CNT.load(SeqCst), 0);
+        drop(value);
+        assert_eq!(DROP_CNT.load(SeqCst), 1);
+        barrier.wait();
+    });
+}
+
+#[test]
 // https://github.com/rust-lang/rust/issues/34761#issuecomment-256320669
 fn arrrrrrrrrrrrrrrrrrrrrr() {
     let cell = OnceCell::new();
     {
         let s = String::new();
-        cell.set(&s).unwrap().unwrap();
+        cell.set(&s).unwrap();
     }
 }
 

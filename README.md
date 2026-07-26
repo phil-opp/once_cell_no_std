@@ -11,7 +11,7 @@ to the stored contents. In a nutshell, API looks *roughly* like this:
 ```rust
 impl OnceCell<T> {
     fn new() -> OnceCell<T> { ... }
-    fn set(&self, value: T) -> Result<Result<(), T>, ConcurrentInitialization> { ... }
+    fn set(&self, value: T) -> Result<(), SetError<T>> { ... }
     fn get(&self) -> Option<&T> { ... }
 }
 ```

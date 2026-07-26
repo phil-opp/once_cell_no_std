@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Breaking:** `OnceCell::set` now returns `Result<(), SetError<T>>` and `OnceCell::try_insert`
+  now returns `Result<&T, InsertError<'_, T>>`. Both error types hand the value that was not
+  written back to the caller. Previously the value was silently dropped when the call failed with
+  a `ConcurrentInitialization` error, which made it impossible to retry.
 - Add `OnceCell::try_get`, which distinguishes an empty cell from a concurrently initializing one
   through the new `error::GetError` type
 
