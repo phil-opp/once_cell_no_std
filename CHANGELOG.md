@@ -9,6 +9,9 @@
 - **Breaking:** `OnceCell::get_or_try_init` now returns `Result<&T, InitError<E>>` instead of the
   nested `Result<Result<&T, E>, ConcurrentInitialization>`. The new `error::InitError` type keeps
   the two failure reasons apart, but composes with the `?` operator.
+- **Breaking:** The declared MSRV is now 1.81, which is the version that stabilized
+  `core::error::Error`. The previously declared 1.65 was never sufficient to build this crate; a
+  CI job now verifies the MSRV.
 - Add `OnceCell::try_get`, which distinguishes an empty cell from a concurrently initializing one
   through the new `error::GetError` type
 
