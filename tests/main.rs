@@ -7,7 +7,7 @@ use std::{
 };
 
 use once_cell_no_std::{
-    error::{GetError, InsertError, SetError},
+    error::{GetError, InitError, InsertError, SetError},
     OnceCell,
 };
 
@@ -96,12 +96,9 @@ fn get_or_try_init() {
     assert!(res.is_err());
     assert!(cell.get().is_none());
 
-    assert_eq!(cell.get_or_try_init(|| Err(())).unwrap(), Err(()));
+    assert_eq!(cell.get_or_try_init(|| Err(())), Err(InitError::InitFunctionFailed(())));
 
-    assert_eq!(
-        cell.get_or_try_init(|| Ok::<_, ()>("hello".to_string())).unwrap(),
-        Ok(&"hello".to_string())
-    );
+    assert_eq!(cell.get_or_try_init(|| Ok::<_, ()>("hello".to_string())), Ok(&"hello".to_string()));
     assert_eq!(cell.get(), Some(&"hello".to_string()));
 }
 
@@ -143,6 +140,30 @@ fn debug_impl() {
     ],
 )"#
     );
+}
+
+
+#[test]
+fn init_error_is_reported_without_nesting() {
+    let cell: OnceCell<i32> = OnceCell::new();
+    let barrier = Barrier::new(2);
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                92
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        // the init function of a concurrent call is not executed at all
+        let err = cell.get_or_try_init(|| -> Result<i32, ()> { unreachable!() });
+        assert_eq!(err, Err(InitError::ConcurrentInitialization));
+        assert_eq!(err.unwrap_err().init_function_error(), None);
+        barrier.wait();
+    });
+    assert_eq!(cell.get(), Some(&92));
 }
 
 #[test]
@@ -257,7 +278,7 @@ fn try_get_reports_reason() {
 #[test]
 fn try_get_after_failed_init() {
     let cell: OnceCell<String> = OnceCell::new();
-    assert_eq!(cell.get_or_try_init(|| Err(())).unwrap(), Err(()));
+    assert_eq!(cell.get_or_try_init(|| Err(())), Err(InitError::InitFunctionFailed(())));
     assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
 
     let res = std::panic::catch_unwind(|| cell.get_or_try_init(|| -> Result<_, ()> { panic!() }));

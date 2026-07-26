@@ -98,7 +98,7 @@ pub mod error;
 
 use imp::OnceCell as Imp;
 
-use crate::error::{ConcurrentInitialization, GetError, InsertError, SetError};
+use crate::error::{ConcurrentInitialization, GetError, InitError, InsertError, SetError};
 
 /// A thread-safe cell which can be written to only once.
 ///
@@ -375,18 +375,53 @@ impl<T> OnceCell<T> {
         F: FnOnce() -> T,
     {
         enum Void {}
-        match self.get_or_try_init(|| Ok::<T, Void>(f()))? {
-            Ok(val) => Ok(val),
-            Err(void) => match void {},
-        }
+        self.get_or_try_init(|| Ok::<T, Void>(f())).map_err(|error| match error {
+            InitError::InitFunctionFailed(void) => match void {},
+            InitError::ConcurrentInitialization => ConcurrentInitialization,
+        })
     }
 
     /// Gets the contents of the cell, initializing it with `f` if
     /// the cell was empty. If the cell was empty and `f` failed, an
-    /// `Ok(Err(_))` value is returned.
+    /// [`InitError::InitFunctionFailed`] error is returned.
     ///
     /// If the cell is concurrently being initialized by another caller, an
-    /// `Err(ConcurrentInitialization)` is returned.
+    /// [`InitError::ConcurrentInitialization`] error is returned. In that case `f` was _not_
+    /// executed.
+    ///
+    /// # Retrying after a concurrent initialization
+    ///
+    /// An `f` that is not executed is dropped, together with everything that it captured. If `f`
+    /// owns a resource that is needed for a retry, keep the ownership in the surrounding scope and
+    /// let `f` borrow it:
+    ///
+    /// ```
+    /// use once_cell_no_std::{error::InitError, OnceCell};
+    ///
+    /// # struct Uart;
+    /// # struct Driver;
+    /// # impl Driver { fn new(_uart: Uart) -> Driver { Driver } }
+    /// let cell = OnceCell::new();
+    /// let mut uart = Some(Uart);
+    ///
+    /// let result = cell.get_or_try_init(|| -> Result<_, ()> {
+    ///     // `f` is called at most once, so the `Option` is always `Some` here
+    ///     Ok(Driver::new(uart.take().expect("init function called twice")))
+    /// });
+    ///
+    /// match result {
+    ///     // the cell is initialized now, either by `f` or by an earlier caller
+    ///     Ok(_driver) => {}
+    ///     // `f` never ran, so `uart` is still available for another attempt
+    ///     Err(InitError::ConcurrentInitialization) => assert!(uart.is_some()),
+    ///     // `f` never returns an error in this example
+    ///     Err(InitError::InitFunctionFailed(())) => unreachable!(),
+    /// }
+    /// ```
+    ///
+    /// Note that this is only needed for resources that cannot be recreated. If the value itself
+    /// already exists, prefer [`set`](Self::set) or [`try_insert`](Self::try_insert), whose errors
+    /// hand it back directly.
     ///
     /// # Panics
     ///
@@ -399,34 +434,34 @@ impl<T> OnceCell<T> {
     ///
     /// # Example
     /// ```
-    /// use once_cell_no_std::OnceCell;
+    /// use once_cell_no_std::{OnceCell, error::InitError};
     ///
     /// let cell = OnceCell::new();
-    /// assert_eq!(cell.get_or_try_init(|| Err(())).unwrap(), Err(()));
+    /// assert_eq!(
+    ///     cell.get_or_try_init(|| Err(())),
+    ///     Err(InitError::InitFunctionFailed(()))
+    /// );
     /// assert!(cell.get().is_none());
     /// let value = cell.get_or_try_init(|| -> Result<i32, ()> {
     ///     Ok(92)
-    /// }).unwrap();
+    /// });
     /// assert_eq!(value, Ok(&92));
     /// assert_eq!(cell.get(), Some(&92))
     /// ```
-    pub fn get_or_try_init<F, E>(&self, f: F) -> Result<Result<&T, E>, ConcurrentInitialization>
+    pub fn get_or_try_init<F, E>(&self, f: F) -> Result<&T, InitError<E>>
     where
         F: FnOnce() -> Result<T, E>,
     {
         // Fast path check
         if let Some(value) = self.get() {
-            return Ok(Ok(value));
+            return Ok(value);
         }
 
-        match self.0.try_initialize(f)? {
-            Ok(()) => {}
-            Err(error) => return Ok(Err(error)),
-        }
+        self.0.try_initialize(f)?;
 
         // Safe b/c value is initialized.
         debug_assert!(self.0.is_initialized());
-        Ok(Ok(unsafe { self.get_unchecked() }))
+        Ok(unsafe { self.get_unchecked() })
     }
 
     /// Takes the value out of this `OnceCell`, moving it back to an uninitialized state.

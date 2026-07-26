@@ -63,6 +63,61 @@ impl From<ConcurrentInitialization> for GetError {
     }
 }
 
+/// The cell could not be initialized.
+///
+/// Returned by [`OnceCell::get_or_try_init`](crate::OnceCell::get_or_try_init), which fails either
+/// because the init function itself failed, or because another caller is already initializing the
+/// cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitError<E> {
+    /// The init function returned an error.
+    ///
+    /// The cell is left uninitialized, so the operation can be retried.
+    InitFunctionFailed(E),
+    /// There is another init function running concurrently for the same `OnceCell`.
+    ///
+    /// The init function of this call was _not_ executed. It is dropped together with everything
+    /// that it captured, so it cannot be reused for a retry. See
+    /// [`OnceCell::get_or_try_init`](crate::OnceCell::get_or_try_init) for how to keep ownership
+    /// of captured resources, and [`ConcurrentInitialization`] for details on the error itself.
+    ConcurrentInitialization,
+}
+
+impl<E> InitError<E> {
+    /// Returns the error of the init function, or `None` for a
+    /// [`ConcurrentInitialization`](Self::ConcurrentInitialization) error.
+    pub fn init_function_error(self) -> Option<E> {
+        match self {
+            InitError::InitFunctionFailed(error) => Some(error),
+            InitError::ConcurrentInitialization => None,
+        }
+    }
+}
+
+impl<E: fmt::Display> fmt::Display for InitError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InitError::InitFunctionFailed(error) => write!(f, "the init function failed: {error}"),
+            InitError::ConcurrentInitialization => ConcurrentInitialization.fmt(f),
+        }
+    }
+}
+
+impl<E: Error + 'static> Error for InitError<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            InitError::InitFunctionFailed(error) => Some(error),
+            InitError::ConcurrentInitialization => None,
+        }
+    }
+}
+
+impl<E> From<ConcurrentInitialization> for InitError<E> {
+    fn from(_: ConcurrentInitialization) -> Self {
+        InitError::ConcurrentInitialization
+    }
+}
+
 /// The value could not be written to the `OnceCell`.
 ///
 /// Returned by [`OnceCell::set`](crate::OnceCell::set). Every variant carries the value that was
