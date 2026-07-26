@@ -198,6 +198,29 @@ impl<T> OnceCell<T> {
         OnceCell(Imp::with_value(value))
     }
 
+    /// Returns whether the cell is initialized.
+    ///
+    /// This method never blocks. It only reports a snapshot of the cell state, which might have
+    /// changed again by the time the returned value is used.
+    ///
+    /// Prefer [`get`](Self::get) or [`try_get`](Self::try_get) if you need the value itself: they
+    /// perform the same check, but hand out a reference in the same step.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use once_cell_no_std::OnceCell;
+    ///
+    /// let cell = OnceCell::new();
+    /// assert!(!cell.is_initialized());
+    ///
+    /// cell.set(92).unwrap();
+    /// assert!(cell.is_initialized());
+    /// ```
+    pub fn is_initialized(&self) -> bool {
+        self.0.is_initialized()
+    }
+
     /// Gets the reference to the underlying value.
     ///
     /// Returns `None` if the cell is empty, or being initialized. This
