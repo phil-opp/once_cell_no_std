@@ -185,7 +185,7 @@ impl<T> From<InsertError<'_, T>> for SetError<T> {
 
 /// The value could not be inserted into the `OnceCell`.
 ///
-/// Returned by [`OnceCell::try_insert`](crate::OnceCell::try_insert). Like [`SetError`], every
+/// Returned by [`OnceCell::insert`](crate::OnceCell::insert). Like [`SetError`], every
 /// variant carries the value that was _not_ inserted back to the caller, so that it can be reused
 /// instead of being dropped.
 #[derive(Clone, Copy, PartialEq, Eq)]

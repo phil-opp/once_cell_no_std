@@ -331,7 +331,7 @@ fn set_hands_the_value_back_on_error() {
 }
 
 #[test]
-fn try_insert_hands_the_value_back_on_error() {
+fn insert_hands_the_value_back_on_error() {
     let cell = OnceCell::new();
     let barrier = Barrier::new(2);
     scope(|scope| {
@@ -344,12 +344,12 @@ fn try_insert_hands_the_value_back_on_error() {
             .unwrap();
         });
         barrier.wait();
-        let err = cell.try_insert("world".to_string()).unwrap_err();
+        let err = cell.insert("world".to_string()).unwrap_err();
         assert_eq!(err, InsertError::ConcurrentInitialization("world".to_string()));
         assert_eq!(err.into_inner(), "world");
         barrier.wait();
     });
-    let err = cell.try_insert("world".to_string()).unwrap_err();
+    let err = cell.insert("world".to_string()).unwrap_err();
     assert_eq!(
         err,
         InsertError::AlreadyInitialized {
