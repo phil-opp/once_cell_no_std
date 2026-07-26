@@ -1,7 +1,7 @@
 # `once_cell_no_std`
 
-The `once_cell_no_std` crate provides a `no_std` `OnceCell` type that implements `Sync` and can be used in
-statics. It does _not_ use spinlocks or any other form of blocking. Instead, concurrent
+The `once_cell_no_std` crate provides a `no_std` `OnceCell` type that implements `Sync` and **can be used in
+statics**. It does _not_ use spinlocks or any other form of blocking. Instead, concurrent
 initialization is reported as an explicit `ConcurrentInitialization` error that the caller can
 handle as it likes.
 
