@@ -4,7 +4,7 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
-use crate::error::{ConcurrentInitialization, GetError};
+use crate::error::{ConcurrentInitialization, GetError, InitError};
 
 pub(crate) struct OnceCell<T> {
     state: AtomicU8,
@@ -57,10 +57,7 @@ impl<T> OnceCell<T> {
     /// Safety: synchronizes with store to value via `is_initialized` or mutex
     /// lock/unlock, writes value only once because of the mutex.
     #[cold]
-    pub(crate) fn try_initialize<F, E>(
-        &self,
-        f: F,
-    ) -> Result<Result<(), E>, ConcurrentInitialization>
+    pub(crate) fn try_initialize<F, E>(&self, f: F) -> Result<(), InitError<E>>
     where
         F: FnOnce() -> Result<T, E>,
     {
@@ -91,7 +88,7 @@ impl<T> OnceCell<T> {
                 }
             }
         })?;
-        Ok(res)
+        res.map_err(InitError::InitFunctionFailed)
     }
 
     /// Get the reference to the underlying value, without checking if the cell
