@@ -11,3 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cargo test
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install 1.81 --profile minimal
+      - run: cargo +1.81 test
