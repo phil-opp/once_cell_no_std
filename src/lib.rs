@@ -98,7 +98,7 @@ pub mod error;
 
 use imp::OnceCell as Imp;
 
-use crate::error::ConcurrentInitialization;
+use crate::error::{ConcurrentInitialization, GetError};
 
 /// A thread-safe cell which can be written to only once.
 ///
@@ -202,18 +202,49 @@ impl<T> OnceCell<T> {
     ///
     /// Returns `None` if the cell is empty, or being initialized. This
     /// method never blocks.
+    ///
+    /// Use [`try_get`](Self::try_get) if you need to distinguish these two cases.
     pub fn get(&self) -> Option<&T> {
-        if self.0.is_initialized() {
-            // Safe b/c value is initialized.
-            Some(unsafe { self.get_unchecked() })
-        } else {
-            None
-        }
+        self.try_get().ok()
+    }
+
+    /// Gets the reference to the underlying value or report why it is not available.
+    ///
+    /// This method is similar [`get`](Self::get), but it returns a detailed [`GetError`] instead
+    /// of `None` if the value is not available.
+    ///
+    /// The method returns [`GetError::Uninitialized`] if the cell is empty and
+    /// [`GetError::ConcurrentInitialization`] if another caller is currently initializing it.
+    /// Like `get`, this method never blocks.
+    ///
+    /// The returned error is a snapshot of the cell state, which might have changed again by the
+    /// time the error is handled. See [`GetError`] for details.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use once_cell_no_std::{OnceCell, error::GetError};
+    ///
+    /// let cell = OnceCell::new();
+    /// assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    ///
+    /// cell.set(92).unwrap().unwrap();
+    /// assert_eq!(cell.try_get(), Ok(&92));
+    /// ```
+    pub fn try_get(&self) -> Result<&T, GetError> {
+        self.0.check_initialized()?;
+        // Safe b/c value is initialized.
+        Ok(unsafe { self.get_unchecked() })
     }
 
     /// Gets the mutable reference to the underlying value.
     ///
     /// Returns `None` if the cell is empty.
+    ///
+    /// Unlike [`get`](Self::get), this is unambiguous: a `None` return value always means that
+    /// the cell is empty, never that an initialization is in progress. Since this method requires
+    /// `&mut` access, no other caller can hold the shared reference that a concurrent
+    /// initialization needs, so there is no `try_get_mut` counterpart.
     ///
     /// This method is allowed to violate the invariant of writing to a `OnceCell`
     /// at most once because it requires `&mut` access to `self`. As with all
