@@ -142,6 +142,25 @@ fn debug_impl() {
     );
 }
 
+#[test]
+fn debug_impl_while_initializing() {
+    let cell = OnceCell::new();
+    let barrier = Barrier::new(2);
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                92
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        assert_eq!(format!("{:?}", cell), "OnceCell(Initializing)");
+        barrier.wait();
+    });
+    assert_eq!(format!("{:?}", cell), "OnceCell(92)");
+}
 
 #[test]
 fn init_error_is_reported_without_nesting() {

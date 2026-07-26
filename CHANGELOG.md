@@ -15,6 +15,8 @@
 - Add `OnceCell::try_get`, which distinguishes an empty cell from a concurrently initializing one
   through the new `error::GetError` type
 - Add `OnceCell::is_initialized` to check the cell state without borrowing the value
+- The `Debug` implementation of `OnceCell` now prints `OnceCell(Initializing)` for a cell that is
+  currently being initialized, instead of reporting it as `OnceCell(Uninit)`
 
 ## 0.1.1
 
