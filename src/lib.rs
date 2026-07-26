@@ -14,7 +14,7 @@
 //! ```rust,ignore
 //! impl OnceCell<T> {
 //!     fn new() -> OnceCell<T> { ... }
-//!     fn set(&self, value: T) -> Result<Result<(), T>, ConcurrentInitialization> { ... }
+//!     fn set(&self, value: T) -> Result<(), SetError<T>> { ... }
 //!     fn get(&self) -> Option<&T> { ... }
 //! }
 //! ```
@@ -98,7 +98,7 @@ pub mod error;
 
 use imp::OnceCell as Imp;
 
-use crate::error::{ConcurrentInitialization, GetError};
+use crate::error::{ConcurrentInitialization, GetError, InsertError, SetError};
 
 /// A thread-safe cell which can be written to only once.
 ///
@@ -228,7 +228,7 @@ impl<T> OnceCell<T> {
     /// let cell = OnceCell::new();
     /// assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
     ///
-    /// cell.set(92).unwrap().unwrap();
+    /// cell.set(92).unwrap();
     /// assert_eq!(cell.try_get(), Ok(&92));
     /// ```
     pub fn try_get(&self) -> Result<&T, GetError> {
@@ -276,14 +276,17 @@ impl<T> OnceCell<T> {
 
     /// Sets the contents of this cell to `value`.
     ///
-    /// Returns `Ok(Ok(()))` if the cell was empty and `Ok(Err(value))` if it was
-    /// full. If the cell is concurrently being initialized by another caller, an
-    /// `Err(ConcurrentInitialization)` is returned.
+    /// Returns `Ok(())` if the cell was empty. If the cell was already full, a
+    /// [`SetError::AlreadyInitialized`] error is returned. If the cell is concurrently being
+    /// initialized by another caller, a [`SetError::ConcurrentInitialization`] error is returned.
+    ///
+    /// Both error variants give `value` back to the caller, so that it can be reused, e.g. to
+    /// retry after a concurrent initialization has finished.
     ///
     /// # Example
     ///
     /// ```
-    /// use once_cell_no_std::OnceCell;
+    /// use once_cell_no_std::{OnceCell, error::SetError};
     ///
     /// static CELL: OnceCell<i32> = OnceCell::new();
     ///
@@ -291,45 +294,54 @@ impl<T> OnceCell<T> {
     ///     assert!(CELL.get().is_none());
     ///
     ///     std::thread::spawn(|| {
-    ///         assert_eq!(CELL.set(92).unwrap(), Ok(()));
+    ///         assert_eq!(CELL.set(92), Ok(()));
     ///     }).join().unwrap();
     ///
-    ///     assert_eq!(CELL.set(62).unwrap(), Err(62));
+    ///     assert_eq!(CELL.set(62), Err(SetError::AlreadyInitialized(62)));
     ///     assert_eq!(CELL.get(), Some(&92));
     /// }
     /// ```
-    pub fn set(&self, value: T) -> Result<Result<(), T>, ConcurrentInitialization> {
-        Ok(match self.try_insert(value)? {
+    pub fn set(&self, value: T) -> Result<(), SetError<T>> {
+        match self.try_insert(value) {
             Ok(_) => Ok(()),
-            Err((_, value)) => Err(value),
-        })
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Like [`set`](Self::set), but also returns a reference to the final cell value.
     ///
-    /// If the cell is concurrently being initialized by another caller, an
-    /// `Err(ConcurrentInitialization)` is returned.
-    ///
     /// # Example
     ///
     /// ```
-    /// use once_cell_no_std::OnceCell;
+    /// use once_cell_no_std::{OnceCell, error::InsertError};
     ///
     /// let cell = OnceCell::new();
     /// assert!(cell.get().is_none());
     ///
-    /// assert_eq!(cell.try_insert(92).unwrap(), Ok(&92));
-    /// assert_eq!(cell.try_insert(62).unwrap(), Err((&92, 62)));
+    /// assert_eq!(cell.try_insert(92), Ok(&92));
+    /// assert_eq!(
+    ///     cell.try_insert(62),
+    ///     Err(InsertError::AlreadyInitialized { stored: &92, value: 62 })
+    /// );
     ///
     /// assert!(cell.get().is_some());
     /// ```
-    pub fn try_insert(&self, value: T) -> Result<Result<&T, (&T, T)>, ConcurrentInitialization> {
+    pub fn try_insert(&self, value: T) -> Result<&T, InsertError<'_, T>> {
         let mut value = Some(value);
-        let res = self.get_or_init(|| unsafe { value.take().unwrap_unchecked() })?;
-        Ok(match value {
+        let res = match self.get_or_init(|| unsafe { value.take().unwrap_unchecked() }) {
+            Ok(res) => res,
+            Err(ConcurrentInitialization) => {
+                // The init closure is only called after the cell was exclusively acquired, so a
+                // `ConcurrentInitialization` error means that it never ran and `value` is still
+                // there.
+                let value = value.take().expect("init closure ran despite a concurrent init");
+                return Err(InsertError::ConcurrentInitialization(value));
+            }
+        };
+        match value {
             None => Ok(res),
-            Some(value) => Err((res, value)),
-        })
+            Some(value) => Err(InsertError::AlreadyInitialized { stored: res, value }),
+        }
     }
 
     /// Gets the contents of the cell, initializing it with `f` if the cell
