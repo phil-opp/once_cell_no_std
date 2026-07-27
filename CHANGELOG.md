@@ -15,9 +15,11 @@
 - **Breaking:** The declared MSRV is now 1.81, which is the version that stabilized
   `core::error::Error`. The previously declared 1.65 was never sufficient to build this crate; a
   CI job now verifies the MSRV.
-- Add `OnceCell::try_get`, which distinguishes an empty cell from a concurrently initializing one
-  through the new `error::GetError` type
 - Add `OnceCell::is_initialized` to check the cell state without borrowing the value
+- Add `OnceCell::state`, which returns a `CellState` snapshot that distinguishes an empty cell from
+  one that another caller is currently initializing. This is meant for reporting (logging,
+  diagnostics, health checks); `get_or_init`, `set`, and `insert` remain the way to act on the
+  difference, since only they resolve the race atomically.
 - The `Debug` implementation of `OnceCell` now prints `OnceCell(Initializing)` for a cell that is
   currently being initialized, instead of reporting it as `OnceCell(Uninit)`
 - Reentrant initialization is now a documented guarantee: calling back into the same cell from an

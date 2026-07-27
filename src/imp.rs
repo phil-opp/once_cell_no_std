@@ -4,7 +4,10 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
-use crate::error::{ConcurrentInitialization, GetError, InitError};
+use crate::{
+    error::{ConcurrentInitialization, InitError},
+    CellState,
+};
 
 pub(crate) struct OnceCell<T> {
     state: AtomicU8,
@@ -35,22 +38,26 @@ impl<T> OnceCell<T> {
         OnceCell { state: AtomicU8::new(COMPLETE), value: UnsafeCell::new(Some(value)) }
     }
 
-    /// Safety: synchronizes with store to value via Release/Acquire.
+    /// Whether the cell holds a value.
+    ///
+    /// Safety: see [`state`](Self::state), which performs the load.
     #[inline]
     pub(crate) fn is_initialized(&self) -> bool {
-        self.state.load(Ordering::Acquire) == COMPLETE
+        self.state() == CellState::Initialized
     }
 
-    /// Like [`is_initialized`](Self::is_initialized), but reports _why_ the cell is not
-    /// initialized.
+    /// The current state of the cell.
+    ///
+    /// This is the only plain read of `state` outside of the initialization path, so it is the
+    /// single place that maps the raw constants onto the state machine.
     ///
     /// Safety: synchronizes with store to value via Release/Acquire.
     #[inline]
-    pub(crate) fn check_initialized(&self) -> Result<(), GetError> {
+    pub(crate) fn state(&self) -> CellState {
         match self.state.load(Ordering::Acquire) {
-            COMPLETE => Ok(()),
-            RUNNING => Err(GetError::ConcurrentInitialization),
-            _ => Err(GetError::Uninitialized),
+            COMPLETE => CellState::Initialized,
+            RUNNING => CellState::Initializing,
+            _ => CellState::Uninitialized,
         }
     }
 
@@ -58,8 +65,7 @@ impl<T> OnceCell<T> {
     /// [`try_initialize_inner`] acts as the exclusive claim on the value slot. Only the caller that
     /// wins it runs `f` and writes the slot, so the value is written at most once. The `Release`
     /// store that ends the `RUNNING` state synchronizes with the `Acquire` loads in
-    /// [`is_initialized`](Self::is_initialized) and
-    /// [`check_initialized`](Self::check_initialized).
+    /// [`is_initialized`](Self::is_initialized) and [`state`](Self::state).
     #[cold]
     pub(crate) fn try_initialize<F, E>(&self, f: F) -> Result<(), InitError<E>>
     where

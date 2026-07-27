@@ -103,7 +103,54 @@ pub mod error;
 
 use imp::OnceCell as Imp;
 
-use crate::error::{ConcurrentInitialization, GetError, InitError, InsertError, SetError};
+use crate::error::{ConcurrentInitialization, InitError, InsertError, SetError};
+
+/// A snapshot of the state of a [`OnceCell`], returned by [`OnceCell::state`].
+///
+/// # This is an observation, not a decision
+///
+/// The returned state describes the cell at the moment of the call and may have changed again by
+/// the time it is inspected. It is meant for reporting: logging, diagnostics, health checks, and
+/// tests. Driving control flow from it is a mistake, because neither of the two "not available"
+/// states supports the conclusion it seems to invite:
+///
+/// - [`Uninitialized`](Self::Uninitialized) does not mean an initialization will succeed. Another
+///   caller may start one before you do.
+/// - [`Initializing`](Self::Initializing) does not mean an initialization will complete. The init
+///   function may fail or panic and return the cell to `Uninitialized`, so a caller that waits for
+///   it to finish may wait forever.
+///
+/// Use [`get_or_init`](OnceCell::get_or_init), [`set`](OnceCell::set), or
+/// [`insert`](OnceCell::insert) when the answer has to be acted upon: they resolve the race
+/// atomically and report contention as of the instant of the attempt.
+///
+/// [`Initialized`](Self::Initialized) is the one state that is stable: a cell only leaves it
+/// through `&mut` access, which no other caller can hold at the same time. Observing it therefore
+/// does guarantee that a subsequent [`get`](OnceCell::get) returns `Some`.
+///
+/// # Example
+///
+/// ```
+/// use once_cell_no_std::{CellState, OnceCell};
+///
+/// let cell = OnceCell::new();
+/// assert_eq!(cell.state(), CellState::Uninitialized);
+///
+/// cell.set(92).unwrap();
+/// assert_eq!(cell.state(), CellState::Initialized);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CellState {
+    /// The cell is empty and no initialization function is currently running.
+    ///
+    /// Note that the cell also returns to this state when an initialization function fails or
+    /// panics, so this state does not mean that no initialization was attempted yet.
+    Uninitialized,
+    /// Another caller is currently running an initialization function for this cell.
+    Initializing,
+    /// The cell holds a value.
+    Initialized,
+}
 
 /// A thread-safe cell which can be written to only once.
 ///
@@ -200,10 +247,10 @@ impl<T> Default for OnceCell<T> {
 
 impl<T: fmt::Debug> fmt::Debug for OnceCell<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.try_get() {
-            Ok(v) => f.debug_tuple("OnceCell").field(v).finish(),
-            Err(GetError::Uninitialized) => f.write_str("OnceCell(Uninit)"),
-            Err(GetError::ConcurrentInitialization) => f.write_str("OnceCell(Initializing)"),
+        match self.get_or_reason() {
+            Ok(value) => f.debug_tuple("OnceCell").field(value).finish(),
+            Err(CellState::Initializing) => f.write_str("OnceCell(Initializing)"),
+            Err(_) => f.write_str("OnceCell(Uninit)"),
         }
     }
 }
@@ -254,8 +301,9 @@ impl<T> OnceCell<T> {
     /// This method never blocks. It only reports a snapshot of the cell state, which might have
     /// changed again by the time the returned value is used.
     ///
-    /// Prefer [`get`](Self::get) or [`try_get`](Self::try_get) if you need the value itself: they
-    /// perform the same check, but hand out a reference in the same step.
+    /// Prefer [`get`](Self::get) if you need the value itself: it performs the same check, but
+    /// hands out a reference in the same step. Use [`state`](Self::state) if you also need to know
+    /// whether an initialization is currently in progress.
     ///
     /// # Example
     ///
@@ -277,38 +325,73 @@ impl<T> OnceCell<T> {
     /// Returns `None` if the cell is empty, or being initialized. This
     /// method never blocks.
     ///
-    /// Use [`try_get`](Self::try_get) if you need to distinguish these two cases.
-    pub fn get(&self) -> Option<&T> {
-        self.try_get().ok()
-    }
-
-    /// Gets the reference to the underlying value or report why it is not available.
+    /// The two cases are not distinguished here, because neither one supports a decision: an empty
+    /// cell might be initialized by the time the caller acts on the `None`, and an initialization
+    /// in progress might fail and leave the cell empty again.
     ///
-    /// This method is similar [`get`](Self::get), but it returns a detailed [`GetError`] instead
-    /// of `None` if the value is not available.
-    ///
-    /// The method returns [`GetError::Uninitialized`] if the cell is empty and
-    /// [`GetError::ConcurrentInitialization`] if another caller is currently initializing it.
-    /// Like `get`, this method never blocks.
-    ///
-    /// The returned error is a snapshot of the cell state, which might have changed again by the
-    /// time the error is handled. See [`GetError`] for details.
+    /// Use [`get_or_init`](Self::get_or_init), [`set`](Self::set), or [`insert`](Self::insert)
+    /// when the difference has to be acted upon. They resolve the race atomically and report
+    /// contention as a [`ConcurrentInitialization`] error that describes the cell at the instant
+    /// of the attempt, rather than at some earlier point in time. Use [`state`](Self::state) when
+    /// the difference only needs to be reported, as in logging or a health check.
     ///
     /// # Example
     ///
     /// ```
-    /// use once_cell_no_std::{OnceCell, error::GetError};
+    /// use once_cell_no_std::OnceCell;
     ///
     /// let cell = OnceCell::new();
-    /// assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    /// assert_eq!(cell.get(), None);
     ///
     /// cell.set(92).unwrap();
-    /// assert_eq!(cell.try_get(), Ok(&92));
+    /// assert_eq!(cell.get(), Some(&92));
     /// ```
-    pub fn try_get(&self) -> Result<&T, GetError> {
-        self.0.check_initialized()?;
-        // Safe b/c value is initialized.
-        Ok(unsafe { self.get_unchecked() })
+    pub fn get(&self) -> Option<&T> {
+        self.get_or_reason().ok()
+    }
+
+    /// Gets the value, or the state that explains why it is not available.
+    ///
+    /// This is the primitive that [`get`](Self::get) and the [`Debug`](fmt::Debug) implementation
+    /// are built from. It exists to keep the `unsafe` read behind a single safe interface, and to
+    /// answer from one atomic load, so that the reported state and the value cannot disagree.
+    ///
+    /// The `Err` value is never [`CellState::Initialized`].
+    ///
+    /// This is deliberately not public: [`state`](Self::state) already exposes the state, and
+    /// because `Initialized` is stable, `state` followed by `get` observes the same thing without
+    /// needing a combined accessor.
+    fn get_or_reason(&self) -> Result<&T, CellState> {
+        match self.0.state() {
+            // Safe b/c the `Acquire` load in `state` reported the value as initialized.
+            CellState::Initialized => Ok(unsafe { self.get_unchecked() }),
+            state => Err(state),
+        }
+    }
+
+    /// Returns a snapshot of the cell state.
+    ///
+    /// Unlike [`is_initialized`](Self::is_initialized), this distinguishes an empty cell from one
+    /// that another caller is currently initializing. This method never blocks.
+    ///
+    /// The result describes the cell at the moment of the call and is intended for reporting, not
+    /// for deciding what to do next. See [`CellState`] for why, and for which of the three states
+    /// can be relied upon afterwards.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use once_cell_no_std::{CellState, OnceCell};
+    ///
+    /// let cell = OnceCell::new();
+    /// assert_eq!(cell.state(), CellState::Uninitialized);
+    ///
+    /// cell.set("hello").unwrap();
+    /// assert_eq!(cell.state(), CellState::Initialized);
+    /// assert_eq!(cell.get(), Some(&"hello"));
+    /// ```
+    pub fn state(&self) -> CellState {
+        self.0.state()
     }
 
     /// Gets the mutable reference to the underlying value.
@@ -318,7 +401,7 @@ impl<T> OnceCell<T> {
     /// Unlike [`get`](Self::get), this is unambiguous: a `None` return value always means that
     /// the cell is empty, never that an initialization is in progress. Since this method requires
     /// `&mut` access, no other caller can hold the shared reference that a concurrent
-    /// initialization needs, so there is no `try_get_mut` counterpart.
+    /// initialization needs, so the ambiguity cannot arise in the first place.
     ///
     /// This method is allowed to violate the invariant of writing to a `OnceCell`
     /// at most once because it requires `&mut` access to `self`. As with all

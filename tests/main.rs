@@ -7,8 +7,8 @@ use std::{
 };
 
 use once_cell_no_std::{
-    error::{GetError, InitError, InsertError, SetError},
-    OnceCell,
+    error::{InitError, InsertError, SetError},
+    CellState, OnceCell,
 };
 
 #[test]
@@ -274,10 +274,10 @@ fn get_does_not_block() {
 }
 
 #[test]
-fn try_get_reports_reason() {
+fn get_reports_a_cell_that_is_being_initialized_as_empty() {
     let cell = OnceCell::new();
     let barrier = Barrier::new(2);
-    assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    assert_eq!(cell.get(), None);
     scope(|scope| {
         scope.spawn(|| {
             cell.get_or_init(|| {
@@ -288,21 +288,55 @@ fn try_get_reports_reason() {
             .unwrap();
         });
         barrier.wait();
-        assert_eq!(cell.try_get(), Err(GetError::ConcurrentInitialization));
+        // an initialization in progress is not distinguished from an empty cell
+        assert_eq!(cell.get(), None);
+        assert!(!cell.is_initialized());
         barrier.wait();
     });
-    assert_eq!(cell.try_get(), Ok(&"hello".to_string()));
+    assert_eq!(cell.get(), Some(&"hello".to_string()));
+    assert!(cell.is_initialized());
 }
 
 #[test]
-fn try_get_after_failed_init() {
+fn get_after_failed_init() {
     let cell: OnceCell<String> = OnceCell::new();
     assert_eq!(cell.get_or_try_init(|| Err(())), Err(InitError::InitFunctionFailed(())));
-    assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    assert_eq!(cell.get(), None);
+    assert!(!cell.is_initialized());
 
     let res = std::panic::catch_unwind(|| cell.get_or_try_init(|| -> Result<_, ()> { panic!() }));
     assert!(res.is_err());
-    assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    assert_eq!(cell.get(), None);
+    assert!(!cell.is_initialized());
+}
+
+#[test]
+fn state_distinguishes_empty_from_initializing() {
+    let cell = OnceCell::new();
+    let barrier = Barrier::new(2);
+    assert_eq!(cell.state(), CellState::Uninitialized);
+    scope(|scope| {
+        scope.spawn(|| {
+            cell.get_or_init(|| {
+                barrier.wait();
+                barrier.wait();
+                "hello".to_string()
+            })
+            .unwrap();
+        });
+        barrier.wait();
+        assert_eq!(cell.state(), CellState::Initializing);
+        barrier.wait();
+    });
+    assert_eq!(cell.state(), CellState::Initialized);
+}
+
+#[test]
+fn state_returns_to_uninitialized_after_a_failed_init() {
+    let cell: OnceCell<String> = OnceCell::new();
+    assert_eq!(cell.get_or_try_init(|| Err(())), Err(InitError::InitFunctionFailed(())));
+    // a failed init leaves no trace: the cell is indistinguishable from one never written to
+    assert_eq!(cell.state(), CellState::Uninitialized);
 }
 
 #[test]
