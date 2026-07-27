@@ -195,7 +195,11 @@ fn try_initialize_inner(
             Err(COMPLETE) => return Ok(()),
             Err(RUNNING) => return Err(ConcurrentInitialization),
             Err(INCOMPLETE) => (),
-            Err(_) => debug_assert!(false),
+            // `state` is only ever set to one of the three constants above, so this arm cannot be
+            // reached. It deliberately does not use `unreachable!()`: that would be the only
+            // panic left in the crate, and would pull `core::panicking` into every binary that
+            // links it. See `ci/no-panic.sh`.
+            Err(_) => debug_assert!(false, "invalid cell state"),
         }
     }
 }
