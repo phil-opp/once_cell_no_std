@@ -2,13 +2,16 @@
 
 ## Unreleased
 
-- **Breaking:** `OnceCell::set` now returns `Result<(), SetError<T>>` and `OnceCell::try_insert`
-  now returns `Result<&T, InsertError<'_, T>>`. Both error types hand the value that was not
-  written back to the caller. Previously the value was silently dropped when the call failed with
-  a `ConcurrentInitialization` error, which made it impossible to retry.
-- **Breaking:** `OnceCell::try_insert` was renamed to `OnceCell::insert`. The `try_` prefix no
-  longer carried any information, since the method is fallible in exactly the same cases as
-  `set`.
+- **Breaking:** `OnceCell::set` now returns `Result<(), SetError<T>>`, whose error hands the value
+  that was not written back to the caller. Previously the value was silently dropped when the call
+  failed with a `ConcurrentInitialization` error, which made it impossible to retry.
+- **Breaking:** `OnceCell::try_insert` was renamed to `OnceCell::get_or_insert` and now returns
+  `Result<Insertion<'_, T>, InsertError<T>>`. An already initialized cell is no longer reported as
+  an error, because the caller still ends up with a reference to a stored value; it is the
+  `Insertion::AlreadyInitialized` outcome instead, which hands the rejected value back as well. The
+  only remaining failure is a concurrent initialization, where there is no value to hand out at
+  all. This makes `cell.get_or_insert(value)?.stored()` a `get_or_init` that takes a value instead
+  of a closure.
 - **Breaking:** `OnceCell::get_or_try_init` now returns `Result<&T, InitError<E>>` instead of the
   nested `Result<Result<&T, E>, ConcurrentInitialization>`. The new `error::InitError` type keeps
   the two failure reasons apart, but composes with the `?` operator.
