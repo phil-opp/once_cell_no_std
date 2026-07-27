@@ -28,16 +28,16 @@
 
 use core::{fmt, mem};
 
-/// Defines a function that is `const` everywhere except under `--cfg loom`, whose atomics cannot
+/// Defines a function that is `const` everywhere except in loom test builds, whose atomics cannot
 /// be constructed in a const context. The body is written once.
 macro_rules! const_fn {
     ($(#[$attr:meta])* $vis:vis const fn $($rest:tt)*) => {
         $(#[$attr])*
-        #[cfg(not(loom))]
+        #[cfg(not(all(test, loom)))]
         $vis const fn $($rest)*
 
         $(#[$attr])*
-        #[cfg(loom)]
+        #[cfg(all(test, loom))]
         $vis fn $($rest)*
     };
 }
@@ -48,6 +48,9 @@ pub mod error;
 
 #[cfg(no_panic_check)]
 mod no_panic_check;
+
+#[cfg(all(test, loom))]
+mod loom_tests;
 
 use imp::OnceCell as Imp;
 

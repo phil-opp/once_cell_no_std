@@ -1,11 +1,20 @@
 //! Exhaustive interleaving checks of the `OnceCell` state machine.
 //!
-//! Run with `RUSTFLAGS="--cfg loom" cargo test --test loom_model`.
-#![cfg(loom)]
+//! Run with `RUSTFLAGS="--cfg loom" cargo test --lib`.
+//!
+//! These live in the library rather than in `tests/` so that `loom` can be a dev-dependency: an
+//! integration test links the library compiled without `cfg(test)`, which would not activate the
+//! loom shim.
+
+// loom needs `std` for threads, so `alloc` is available here even though the crate is `no_std`.
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
 
 use loom::sync::Arc;
 use loom::thread;
-use once_cell_no_std::{CellState, Insertion, OnceCell};
+
+use crate::{CellState, Insertion, OnceCell};
 
 /// Two callers race to initialize. Whatever the schedule: at most one init function runs, the
 /// cell ends up holding exactly one of the two values, and nobody observes a torn or absent value

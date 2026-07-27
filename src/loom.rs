@@ -9,18 +9,18 @@
 //! state machine is written once, against loom's API, and the non-loom build gets a shim with the
 //! same shape that compiles away.
 
-#[cfg(not(loom))]
+#[cfg(not(all(test, loom)))]
 pub(crate) use core::sync::atomic::{AtomicU8, Ordering};
-#[cfg(loom)]
+#[cfg(all(test, loom))]
 pub(crate) use loom::{
     cell::UnsafeCell,
     sync::atomic::{AtomicU8, Ordering},
 };
 
-#[cfg(not(loom))]
+#[cfg(not(all(test, loom)))]
 pub(crate) use shim::UnsafeCell;
 
-#[cfg(not(loom))]
+#[cfg(not(all(test, loom)))]
 mod shim {
     /// Mirrors the API of [`loom::cell::UnsafeCell`], compiling down to a plain
     /// [`core::cell::UnsafeCell`].
