@@ -1,14 +1,14 @@
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Barrier,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     thread::scope,
 };
 
 use once_cell_no_std::{
-    error::{InitError, SetError},
     CellState, Insertion, OnceCell,
+    error::{InitError, SetError},
 };
 
 #[test]
@@ -239,10 +239,12 @@ fn once_cell_does_not_leak_partially_constructed_boxes() {
         let cell: OnceCell<String> = OnceCell::new();
         scope(|scope| {
             for _ in 0..n_readers {
-                scope.spawn(|| loop {
-                    if let Some(msg) = cell.get() {
-                        assert_eq!(msg, MSG);
-                        break;
+                scope.spawn(|| {
+                    loop {
+                        if let Some(msg) = cell.get() {
+                            assert_eq!(msg, MSG);
+                            break;
+                        }
                     }
                 });
             }

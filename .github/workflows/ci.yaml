@@ -21,11 +21,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-      - run: rustup toolchain install 1.81 --profile minimal
+      - run: rustup toolchain install 1.85 --profile minimal
       # Only the library is checked here. The dev-dependencies used by the tests and examples have
       # their own, faster-moving MSRVs, which are not part of this crate's MSRV promise; building
       # them would make this job fail for reasons unrelated to our code.
-      - run: cargo +1.81 build --lib
+      - run: cargo +1.85 build --lib
 
   no_std:
     name: no_std

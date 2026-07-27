@@ -15,9 +15,7 @@
 - **Breaking:** `OnceCell::get_or_try_init` now returns `Result<&T, InitError<E>>` instead of the
   nested `Result<Result<&T, E>, ConcurrentInitialization>`. The new `error::InitError` type keeps
   the two failure reasons apart, but composes with the `?` operator.
-- **Breaking:** The declared MSRV is now 1.81, which is the version that stabilized
-  `core::error::Error`. The previously declared 1.65 was never sufficient to build this crate; a
-  CI job now verifies the MSRV.
+- **Breaking:** The crate was migrated to the 2024 edition, which raises the MSRV to 1.85.
 - Add `OnceCell::is_initialized` to check the cell state without borrowing the value
 - Add `OnceCell::state`, which returns a `CellState` snapshot that distinguishes an empty cell from
   one that another caller is currently initializing. This is meant for reporting (logging,

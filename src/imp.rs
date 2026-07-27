@@ -5,8 +5,8 @@ use core::{
 };
 
 use crate::{
-    error::{ConcurrentInitialization, InitError},
     CellState,
+    error::{ConcurrentInitialization, InitError},
 };
 
 pub(crate) struct OnceCell<T> {
@@ -113,8 +113,12 @@ impl<T> OnceCell<T> {
     /// the contents are acquired by (synchronized to) this thread.
     pub(crate) unsafe fn get_unchecked(&self) -> &T {
         debug_assert!(self.is_initialized());
-        let slot = &*self.value.get();
-        slot.as_ref().unwrap_unchecked()
+        // SAFETY: the caller guarantees that the cell is initialized, so the slot holds a `Some`
+        // that no one is writing to, and that the write is synchronized to this thread.
+        unsafe {
+            let slot = &*self.value.get();
+            slot.as_ref().unwrap_unchecked()
+        }
     }
 
     /// Gets the mutable reference to the underlying value.

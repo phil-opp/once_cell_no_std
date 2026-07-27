@@ -494,7 +494,9 @@ impl<T> OnceCell<T> {
     /// the contents are acquired by (synchronized to) this thread.
     #[inline]
     pub unsafe fn get_unchecked(&self) -> &T {
-        self.0.get_unchecked()
+        // SAFETY: the caller guarantees that the cell is initialized and synchronized to this
+        // thread, which is exactly what the inner method requires.
+        unsafe { self.0.get_unchecked() }
     }
 
     /// Sets the contents of this cell to `value`.
