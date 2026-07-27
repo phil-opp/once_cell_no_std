@@ -1,6 +1,6 @@
 [package]
 name = "once_cell_no_std"
-version = "0.1.1"
+version = "0.2.0"
 authors = [
     "Aleksey Kladov <aleksey.kladov@gmail.com>",
     "Philipp Oppermann <dev@phil-opp.com>",
