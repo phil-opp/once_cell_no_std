@@ -17,7 +17,7 @@ repository = "https://github.com/phil-opp/once_cell_no_std"
 keywords = ["no_std", "static", "once", "cell", "sync"]
 categories = ["no-std", "rust-patterns", "embedded", "concurrency"]
 
-exclude = ["/.github", "/.devcontainer", "/rustfmt.toml"]
+exclude = ["/.github", "/.devcontainer", "/ci", "/rustfmt.toml"]
 
 [dev-dependencies]
 regex = "1.10.6"
@@ -28,7 +28,7 @@ regex = "1.10.6"
 loom = "0.7"
 
 [lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)', 'cfg(no_panic_check)'] }
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--generate-link-to-definition"]

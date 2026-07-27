@@ -78,6 +78,17 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  no_panic:
+    name: No panics
+    runs-on: ubuntu-latest
+
+    # A single reachable panic pulls `core::panicking` and the formatting machinery into every
+    # binary that links this crate, and breaks users who forbid panics outright.
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup target add thumbv7em-none-eabihf
+      - run: ./ci/no-panic.sh
+
   loom:
     name: Loom
     runs-on: ubuntu-latest

@@ -32,6 +32,9 @@ mod imp;
 mod loom;
 pub mod error;
 
+#[cfg(no_panic_check)]
+mod no_panic_check;
+
 use imp::OnceCell as Imp;
 
 use crate::error::{ConcurrentInitialization, InitError, InsertError, SetError};
