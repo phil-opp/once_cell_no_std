@@ -8,7 +8,10 @@
 //! A method that is not called below contributes no code, so the check is only as good as the
 //! coverage here.
 
-use crate::{CellState, Insertion, OnceCell};
+use crate::{
+    CellState, Insertion, OnceCell,
+    error::{ConcurrentInitialization, InitError, InsertError, SetError},
+};
 
 static CELL: OnceCell<u64> = OnceCell::new();
 
@@ -76,4 +79,32 @@ pub extern "C" fn __no_panic_check_owned(value: u64) -> u64 {
     total += unsafe { *clone.get_unchecked() };
 
     total
+}
+
+/// Exercises the `Debug` and `Display` implementations.
+///
+/// These format into a sink that discards everything, so only the formatting code of this crate is
+/// measured, not that of whatever the caller writes into. The formatted values are built from
+/// `value` rather than from literals, so that the optimizer cannot fold the formatting away.
+#[unsafe(no_mangle)]
+pub extern "C" fn __no_panic_check_fmt(value: u64) -> u64 {
+    use core::fmt::Write;
+
+    struct Sink;
+    impl Write for Sink {
+        fn write_str(&mut self, _: &str) -> core::fmt::Result {
+            Ok(())
+        }
+    }
+
+    let set = SetError::AlreadyInitialized(value);
+    let insert = InsertError(value);
+    let init = InitError::InitFunctionFailed(value);
+    let insertion = Insertion::AlreadyInitialized { stored: &value, rejected: value };
+
+    let mut ok = 0;
+    ok += write!(Sink, "{CELL:?} {:?} {:?}", CellState::Initializing, insertion).is_ok() as u64;
+    ok += write!(Sink, "{set:?} {insert:?} {init:?} {ConcurrentInitialization:?}").is_ok() as u64;
+    ok += write!(Sink, "{set} {insert} {init} {ConcurrentInitialization}").is_ok() as u64;
+    ok
 }
