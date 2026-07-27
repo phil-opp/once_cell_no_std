@@ -355,12 +355,12 @@ fn set_hands_the_value_back_on_error() {
         barrier.wait();
         let err = cell.set("world".to_string()).unwrap_err();
         assert_eq!(err, SetError::ConcurrentInitialization("world".to_string()));
-        assert_eq!(err.into_inner(), "world");
+        assert_eq!(err.into_rejected_value(), "world");
         barrier.wait();
     });
     let err = cell.set("world".to_string()).unwrap_err();
     assert_eq!(err, SetError::AlreadyInitialized("world".to_string()));
-    assert_eq!(err.into_inner(), "world");
+    assert_eq!(err.into_rejected_value(), "world");
     assert_eq!(cell.get(), Some(&"hello".to_string()));
 }
 
@@ -380,7 +380,7 @@ fn insert_hands_the_value_back_on_error() {
         barrier.wait();
         let err = cell.insert("world".to_string()).unwrap_err();
         assert_eq!(err, InsertError::ConcurrentInitialization("world".to_string()));
-        assert_eq!(err.into_inner(), "world");
+        assert_eq!(err.into_rejected_value(), "world");
         barrier.wait();
     });
     let err = cell.insert("world".to_string()).unwrap_err();
@@ -391,7 +391,7 @@ fn insert_hands_the_value_back_on_error() {
             value: "world".to_string()
         }
     );
-    assert_eq!(err.into_inner(), "world");
+    assert_eq!(err.into_rejected_value(), "world");
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn concurrent_set_does_not_drop_the_value() {
             .unwrap();
         });
         barrier.wait();
-        let value = cell.set(Dropper).unwrap_err().into_inner();
+        let value = cell.set(Dropper).unwrap_err().into_rejected_value();
         assert_eq!(DROP_CNT.load(SeqCst), 0);
         drop(value);
         assert_eq!(DROP_CNT.load(SeqCst), 1);

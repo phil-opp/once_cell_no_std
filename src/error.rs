@@ -98,7 +98,10 @@ pub enum SetError<T> {
 
 impl<T> SetError<T> {
     /// Returns the value that was not written to the cell.
-    pub fn into_inner(self) -> T {
+    ///
+    /// This is the value that was handed to [`OnceCell::set`](crate::OnceCell::set), never the one
+    /// stored in the cell: a `OnceCell` does not give up a value it has accepted.
+    pub fn into_rejected_value(self) -> T {
         match self {
             SetError::AlreadyInitialized(value) | SetError::ConcurrentInitialization(value) => {
                 value
@@ -165,7 +168,10 @@ pub enum InsertError<'a, T> {
 
 impl<T> InsertError<'_, T> {
     /// Returns the value that was not inserted into the cell.
-    pub fn into_inner(self) -> T {
+    ///
+    /// For [`AlreadyInitialized`](Self::AlreadyInitialized) this is the `value` field, never the
+    /// `stored` one.
+    pub fn into_rejected_value(self) -> T {
         match self {
             InsertError::AlreadyInitialized { value, .. }
             | InsertError::ConcurrentInitialization(value) => value,
