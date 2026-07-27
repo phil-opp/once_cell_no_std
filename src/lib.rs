@@ -11,6 +11,20 @@
 #![no_std]
 #![deny(missing_docs)]
 #![warn(clippy::undocumented_unsafe_blocks)]
+// This crate must not panic: a single reachable panic pulls `core::panicking` and the formatting
+// machinery into every binary that links it, and breaks users who forbid panics outright. These
+// lints catch the ways a panic is usually introduced; `ci/no-panic.sh` checks the compiled output
+// for the ways they cannot see, such as `assert!`.
+#![warn(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
 
 use core::{fmt, mem};
 
