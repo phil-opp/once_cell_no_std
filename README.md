@@ -10,21 +10,52 @@ most `no_std` targets, but not all of them: CAS-less targets such as `thumbv6m-n
 (Cortex-M0/M0+), AVR, or RISC-V without the `A` extension are _not_ supported and fail to compile.
 
 `OnceCell` might store arbitrary non-`Copy` types, can be assigned to at most once and provide direct access
-to the stored contents. In a nutshell, API looks *roughly* like this:
+to the stored contents. In a nutshell, the API looks like this:
 
 ```rust
-impl OnceCell<T> {
-    fn new() -> OnceCell<T> { ... }
-    fn set(&self, value: T) -> Result<(), SetError<T>> { ... }
-    fn get(&self) -> Option<&T> { ... }
-}
+use once_cell_no_std::OnceCell;
+
+// `new` is a `const fn`, so a cell can live in a `static`
+static CELL: OnceCell<u32> = OnceCell::new();
+
+// `set` takes `&self`, so it works on a non-mutable `static`
+assert_eq!(CELL.set(92), Ok(()));
+assert_eq!(CELL.get(), Some(&92));
+
+// a second write is refused, and hands the value back instead of dropping it
+assert_eq!(CELL.set(62).unwrap_err().into_rejected_value(), 62);
 ```
 
-Note that, like with `RefCell` and `Mutex`, the `set` method requires only a shared reference.
-Because of the single assignment restriction `get` can return an `&T` instead of `Ref<T>`
-or `MutexGuard<T>`.
+## Example
 
-More patterns and use-cases are in the [docs](https://docs.rs/once_cell_no_std/)!
+```rust
+use std::env;
+
+use once_cell_no_std::OnceCell;
+
+#[derive(Debug)]
+pub struct Logger {
+    // ...
+}
+static INSTANCE: OnceCell<Logger> = OnceCell::new();
+
+impl Logger {
+    pub fn global() -> &'static Logger {
+        INSTANCE.get().expect("logger is not initialized")
+    }
+
+    fn from_cli(args: env::Args) -> Result<Logger, std::io::Error> {
+        // ... parse `args` ...
+        Ok(Logger {})
+    }
+}
+
+fn main() {
+    let logger = Logger::from_cli(env::args()).unwrap();
+    INSTANCE.set(logger).unwrap();
+    // use `Logger::global()` from now on
+}
+```
 
 ## Related crates
 
