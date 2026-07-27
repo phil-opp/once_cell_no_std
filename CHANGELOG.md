@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 – 2026-07-27
+
 This release reworks how failures are reported. Every fallible method used to return a nested
 `Result<Result<_, _>, ConcurrentInitialization>`, which forced callers to unwrap twice and dropped
 the value they had passed in whenever the cell turned out to be busy. The nesting is gone: each
