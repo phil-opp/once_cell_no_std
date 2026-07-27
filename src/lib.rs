@@ -581,14 +581,21 @@ impl<T> OnceCell<T> {
     /// ```
     pub fn get_or_insert(&self, value: T) -> Result<Insertion<'_, T>, InsertError<T>> {
         let mut value = Some(value);
-        // SAFETY: `get_or_init` runs the closure at most once, and `value` is `Some` until then.
-        let stored = match self.get_or_init(|| unsafe { value.take().unwrap_unchecked() }) {
+        let stored = match self.get_or_init(|| {
+            debug_assert!(value.is_some(), "init closure called twice");
+            // SAFETY: `imp::try_initialize_inner` contains a single call to the init closure, in
+            // the arm that won the `INCOMPLETE` -> `RUNNING` compare-exchange, and that arm
+            // returns immediately afterwards. The closure therefore runs at most once, so `value`
+            // has not been taken yet.
+            unsafe { value.take().unwrap_unchecked() }
+        }) {
             Ok(stored) => stored,
             Err(ConcurrentInitialization) => {
-                // The init closure is only called after the cell was exclusively acquired, so a
-                // `ConcurrentInitialization` error means that it never ran and `value` is still
-                // there.
-                let value = value.take().expect("init closure ran despite a concurrent init");
+                debug_assert!(value.is_some(), "init closure ran despite a concurrent init");
+                // SAFETY: `imp::try_initialize_inner` returns `ConcurrentInitialization` only from
+                // the arm that observed the cell in the `RUNNING` state, which does not call the
+                // init closure. The closure never ran, so `value` is still there.
+                let value = unsafe { value.take().unwrap_unchecked() };
                 return Err(InsertError(value));
             }
         };

@@ -92,8 +92,9 @@ impl<T> OnceCell<T> {
             //   important for safety.
             // - finally, if it returns Ok, we store the value and the `Guard` then stores
             //   `COMPLETE` with `Release`, which synchronizes with the `Acquire` loads.
+            debug_assert!(f.is_some(), "init closure called twice");
             // SAFETY: `try_initialize_inner` runs this closure at most once, so `f` has not been
-            // taken yet.
+            // taken yet. See the contract documented on that function.
             let f = unsafe { f.take().unwrap_unchecked() };
             match f() {
                 // SAFETY: winning the compare-exchange gave this caller exclusive access to the
@@ -163,6 +164,21 @@ impl<'a> Drop for Guard<'a> {
 ///
 /// If the `state` is already `COMPLETE` (i.e. already initialized), the given `init` function is
 /// _not_ executed and `Ok(())` is returned directly.
+///
+/// # Contract relied upon by callers
+///
+/// Callers use `unsafe` to take values out of `Option`s that `init` is expected to have consumed
+/// or left alone, so the following two properties are load-bearing for soundness. Both hold by
+/// inspection of the loop below, which contains exactly one call to `init`:
+///
+/// 1. **`init` runs at most once.** The only call is in the arm that won the `INCOMPLETE` ->
+///    `RUNNING` compare-exchange, and that arm returns immediately instead of looping again. Every
+///    other arm either returns or retries the compare-exchange without calling `init`.
+/// 2. **`init` never runs when `Err(ConcurrentInitialization)` is returned.** That error is
+///    produced only by the arm that observed the cell in the `RUNNING` state, which does not call
+///    `init` and returns straight away.
+///
+/// Keep both properties in mind when changing this function.
 #[inline(never)]
 fn try_initialize_inner(
     state: &AtomicU8,
