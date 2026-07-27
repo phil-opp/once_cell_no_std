@@ -5,6 +5,10 @@ statics**. It does _not_ use spinlocks or any other form of blocking. Instead, c
 initialization is reported as an explicit `ConcurrentInitialization` error that the caller can
 handle as it likes.
 
+The only thing this crate requires from the target is atomic compare-and-swap on `u8`. This covers
+most `no_std` targets, but not all of them: CAS-less targets such as `thumbv6m-none-eabi`
+(Cortex-M0/M0+), AVR, or RISC-V without the `A` extension are _not_ supported and fail to compile.
+
 `OnceCell` might store arbitrary non-`Copy` types, can be assigned to at most once and provide direct access
 to the stored contents. In a nutshell, API looks *roughly* like this:
 
