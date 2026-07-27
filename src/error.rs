@@ -1,3 +1,20 @@
+//! The error types returned by the fallible [`OnceCell`](crate::OnceCell) methods.
+//!
+//! Every one of them reports some combination of the same three conditions, and each adds exactly
+//! one thing over the last:
+//!
+//! | error | reports | returned by |
+//! | ----- | ------- | ----------- |
+//! | [`ConcurrentInitialization`] | another caller is initializing the cell | [`get_or_init`](crate::OnceCell::get_or_init) |
+//! | [`InitError`] | the above, plus a failing init function | [`get_or_try_init`](crate::OnceCell::get_or_try_init) |
+//! | [`InsertError`] | the above, plus the value that was not written | [`get_or_insert`](crate::OnceCell::get_or_insert) |
+//! | [`SetError`] | the above, plus an already initialized cell | [`set`](crate::OnceCell::set) |
+//!
+//! Note that an already initialized cell is only an error for [`set`](crate::OnceCell::set), whose purpose is to *be*
+//! the caller that initializes the cell. [`get_or_insert`](crate::OnceCell::get_or_insert) reports
+//! it as the [`Insertion::AlreadyInitialized`](crate::Insertion::AlreadyInitialized) outcome
+//! instead, because the caller still ends up with a reference to a stored value.
+
 use core::{
     error::Error,
     fmt::{self, Display},
