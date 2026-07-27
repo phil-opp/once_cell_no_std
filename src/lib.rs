@@ -168,6 +168,7 @@ impl<'a, T> Insertion<'a, T> {
     /// [`Inserted`](Self::Inserted), and the value an earlier caller stored for
     /// [`AlreadyInitialized`](Self::AlreadyInitialized). In both cases it is the value that
     /// [`OnceCell::get`] returns from now on, since an initialized cell keeps its value.
+    #[inline]
     pub fn stored(&self) -> &'a T {
         match self {
             Insertion::Inserted(stored) | Insertion::AlreadyInitialized { stored, .. } => stored,
@@ -175,11 +176,13 @@ impl<'a, T> Insertion<'a, T> {
     }
 
     /// Returns whether the value was inserted into the cell.
+    #[inline]
     pub fn was_inserted(&self) -> bool {
         matches!(self, Insertion::Inserted(_))
     }
 
     /// Returns the value that was not inserted, or `None` if it was.
+    #[inline]
     pub fn into_rejected_value(self) -> Option<T> {
         match self {
             Insertion::Inserted(_) => None,
@@ -384,6 +387,7 @@ impl<T: Eq> Eq for OnceCell<T> {}
 impl<T> OnceCell<T> {
     const_fn! {
         /// Creates a new empty cell.
+        #[inline]
         pub const fn new() -> OnceCell<T> {
             OnceCell(Imp::new())
         }
@@ -391,6 +395,7 @@ impl<T> OnceCell<T> {
 
     const_fn! {
         /// Creates a new initialized cell.
+        #[inline]
         pub const fn with_value(value: T) -> OnceCell<T> {
             OnceCell(Imp::with_value(value))
         }
@@ -416,6 +421,7 @@ impl<T> OnceCell<T> {
     /// cell.set(92).unwrap();
     /// assert!(cell.is_initialized());
     /// ```
+    #[inline]
     pub fn is_initialized(&self) -> bool {
         self.0.is_initialized()
     }
@@ -446,6 +452,7 @@ impl<T> OnceCell<T> {
     /// cell.set(92).unwrap();
     /// assert_eq!(cell.get(), Some(&92));
     /// ```
+    #[inline]
     pub fn get(&self) -> Option<&T> {
         self.get_or_reason().ok()
     }
@@ -461,6 +468,7 @@ impl<T> OnceCell<T> {
     /// This is deliberately not public: [`state`](Self::state) already exposes the state, and
     /// because `Initialized` is stable, `state` followed by `get` observes the same thing without
     /// needing a combined accessor.
+    #[inline]
     fn get_or_reason(&self) -> Result<&T, CellState> {
         match self.0.state() {
             // SAFETY: the `Acquire` load in `state` reported the cell as initialized, which also
@@ -491,6 +499,7 @@ impl<T> OnceCell<T> {
     /// assert_eq!(cell.state(), CellState::Initialized);
     /// assert_eq!(cell.get(), Some(&"hello"));
     /// ```
+    #[inline]
     pub fn state(&self) -> CellState {
         self.0.state()
     }
@@ -805,6 +814,7 @@ impl<T> OnceCell<T> {
     /// cell.set(92).unwrap();
     /// cell = OnceCell::new();
     /// ```
+    #[inline]
     pub fn take(&mut self) -> Option<T> {
         mem::take(self).into_inner()
     }
