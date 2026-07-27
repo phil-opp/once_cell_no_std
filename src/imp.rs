@@ -54,8 +54,12 @@ impl<T> OnceCell<T> {
         }
     }
 
-    /// Safety: synchronizes with store to value via `is_initialized` or mutex
-    /// lock/unlock, writes value only once because of the mutex.
+    /// Safety: the `INCOMPLETE` -> `RUNNING` compare-exchange in
+    /// [`try_initialize_inner`] acts as the exclusive claim on the value slot. Only the caller that
+    /// wins it runs `f` and writes the slot, so the value is written at most once. The `Release`
+    /// store that ends the `RUNNING` state synchronizes with the `Acquire` loads in
+    /// [`is_initialized`](Self::is_initialized) and
+    /// [`check_initialized`](Self::check_initialized).
     #[cold]
     pub(crate) fn try_initialize<F, E>(&self, f: F) -> Result<(), InitError<E>>
     where
@@ -65,14 +69,17 @@ impl<T> OnceCell<T> {
         let mut res: Result<(), E> = Ok(());
         let slot: *mut Option<T> = self.value.get();
         try_initialize_inner(&self.state, &mut || {
-            // We are calling user-supplied function and need to be careful.
-            // - if it returns Err, we unlock mutex and return without touching anything
-            // - if it panics, we unlock mutex and propagate panic without touching anything
-            // - if it calls `set` or `get_or_try_init` re-entrantly, we get a deadlock on
-            //   mutex, which is important for safety. We *could* detect this and panic,
-            //   but that is more complicated
-            // - finally, if it returns Ok, we store the value and store the flag with
-            //   `Release`, which synchronizes with `Acquire`s.
+            // We are calling a user-supplied function and need to be careful.
+            // - if it returns Err, the `Guard` resets the state to `INCOMPLETE` and we return
+            //   without ever touching the slot
+            // - if it panics, the `Guard` resets the state to `INCOMPLETE` and the panic
+            //   propagates without the slot having been touched
+            // - if it calls `set` or `get_or_try_init` re-entrantly, that nested call finds the
+            //   state to be `RUNNING` and fails with `ConcurrentInitialization` without touching
+            //   the slot. This is what keeps a second writer from aliasing the slot, so it is
+            //   important for safety.
+            // - finally, if it returns Ok, we store the value and the `Guard` then stores
+            //   `COMPLETE` with `Release`, which synchronizes with the `Acquire` loads.
             let f = unsafe { f.take().unwrap_unchecked() };
             match f() {
                 Ok(value) => unsafe {

@@ -20,6 +20,10 @@
 - Add `OnceCell::is_initialized` to check the cell state without borrowing the value
 - The `Debug` implementation of `OnceCell` now prints `OnceCell(Initializing)` for a cell that is
   currently being initialized, instead of reporting it as `OnceCell(Uninit)`
+- Reentrant initialization is now a documented guarantee: calling back into the same cell from an
+  init function returns a `ConcurrentInitialization` error. The docs inherited from `once_cell`
+  still declared this case unspecified and claimed the implementation deadlocks, which was never
+  true for this crate since it never blocks.
 
 ## 0.1.1
 

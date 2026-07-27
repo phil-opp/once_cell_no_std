@@ -424,18 +424,26 @@ impl<T> OnceCell<T> {
     /// Gets the contents of the cell, initializing it with `f` if the cell
     /// was empty.
     ///
-    /// Many threads may call `get_or_init` concurrently with different
-    /// initializing functions, but it is guaranteed that only one function
-    /// will be executed.
+    /// Many callers may invoke `get_or_init` concurrently with different initializing functions,
+    /// but it is guaranteed that at most one of them is executed. The other callers receive a
+    /// [`ConcurrentInitialization`] error and their `f` is dropped without ever being called.
     ///
     /// # Panics
     ///
     /// If `f` panics, the panic is propagated to the caller, and the cell
     /// remains uninitialized.
     ///
-    /// It is an error to reentrantly initialize the cell from `f`. The
-    /// exact outcome is unspecified. Current implementation deadlocks, but
-    /// this may be changed to a panic in the future.
+    /// # Reentrancy
+    ///
+    /// Calling back into the same cell from `f` is safe and never deadlocks, because this type
+    /// never blocks. The cell counts as concurrently initializing while `f` runs, so a nested
+    /// [`get_or_init`](Self::get_or_init), [`set`](Self::set), or [`insert`](Self::insert) on the
+    /// same cell returns a [`ConcurrentInitialization`] error.
+    ///
+    /// Note that such a nested call can never succeed, so `f` must be able to make progress
+    /// without it. In particular, retrying in a loop like the one shown in the
+    /// [type documentation](Self#handling-concurrent-initialization) does hang when used
+    /// reentrantly, since the initialization it waits for is the one that is blocked on the loop.
     ///
     /// # Example
     /// ```
@@ -505,9 +513,18 @@ impl<T> OnceCell<T> {
     /// If `f` panics, the panic is propagated to the caller, and
     /// the cell remains uninitialized.
     ///
-    /// It is an error to reentrantly initialize the cell from `f`.
-    /// The exact outcome is unspecified. Current implementation
-    /// deadlocks, but this may be changed to a panic in the future.
+    /// # Reentrancy
+    ///
+    /// Calling back into the same cell from `f` is safe and never deadlocks, because this type
+    /// never blocks. The cell counts as concurrently initializing while `f` runs, so a nested
+    /// [`get_or_try_init`](Self::get_or_try_init), [`set`](Self::set), or
+    /// [`insert`](Self::insert) on the same cell returns a
+    /// [`InitError::ConcurrentInitialization`] error.
+    ///
+    /// Note that such a nested call can never succeed, so `f` must be able to make progress
+    /// without it. In particular, retrying in a loop like the one shown in the
+    /// [type documentation](Self#handling-concurrent-initialization) does hang when used
+    /// reentrantly, since the initialization it waits for is the one that is blocked on the loop.
     ///
     /// # Example
     /// ```
