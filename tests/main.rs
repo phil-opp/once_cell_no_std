@@ -391,7 +391,10 @@ fn concurrent_set_does_not_drop_the_value() {
 }
 
 #[test]
+// See:
 // https://github.com/rust-lang/rust/issues/34761#issuecomment-256320669
+// https://github.com/matklad/once_cell/pull/72
+// https://forge.rust-lang.org/libs/maintaining-std.html#is-there-a-manual-drop-implementation
 fn arrrrrrrrrrrrrrrrrrrrrr() {
     let cell = OnceCell::new();
     {
