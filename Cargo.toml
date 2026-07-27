@@ -6,40 +6,29 @@ authors = [
     "Philipp Oppermann <dev@phil-opp.com>",
 ]
 license = "MIT OR Apache-2.0"
-edition = "2021"
-rust-version = "1.81"
+edition = "2024"
+rust-version = "1.85"
 
 description = "Sync single assignment cells for `no_std`"
 readme = "README.md"
 documentation = "https://docs.rs/once_cell_no_std"
 
 repository = "https://github.com/phil-opp/once_cell_no_std"
-keywords = ["no_std", "static"]
-categories = ["rust-patterns", "embedded"]
+keywords = ["no_std", "static", "once", "cell", "sync"]
+categories = ["no-std", "rust-patterns", "embedded", "concurrency"]
 
-exclude = ["*.png", "*.svg", "/Cargo.lock.msrv", "rustfmt.toml"]
+exclude = ["/.github", "/.devcontainer", "/ci", "/rustfmt.toml"]
 
 [dev-dependencies]
 regex = "1.10.6"
 
-[features]
-default = []
+# `loom` replaces the atomics and the `UnsafeCell` in `imp` to exhaustively explore thread
+# interleavings. It is only pulled in under `--cfg loom`; see `tests/loom_model.rs`.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
 
-[[example]]
-name = "bench"
-
-[[example]]
-name = "bench_acquire"
-
-[[example]]
-name = "reentrant_init_panic"
-
-[[example]]
-name = "regex"
-
-[[example]]
-name = "test_synchronization"
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)', 'cfg(no_panic_check)'] }
 
 [package.metadata.docs.rs]
-all-features = true
 rustdoc-args = ["--generate-link-to-definition"]

@@ -9,6 +9,8 @@ macro_rules! regex {
     }};
 }
 
+// Recompiling the regex on every iteration is the whole point of this baseline.
+#[allow(clippy::regex_creation_in_loops)]
 fn slow() {
     let s = r##"13.28.24.13 - - [10/Mar/2016:19:29:25 +0100] "GET /etc/lib/pChart2/examples/index.php?Action=View&Script=../../../../cnf/db.php HTTP/1.1" 404 151 "-" "HTTP_Request2/2.2.1 (http://pear.php.net/package/http_request2) PHP/5.3.16""##;
 
@@ -24,6 +26,8 @@ fn slow() {
     println!("{}", total);
 }
 
+// False positive: the `regex!` macro compiles the regex once and caches it in a `OnceCell`.
+#[allow(clippy::regex_creation_in_loops)]
 fn fast() {
     let s = r##"13.28.24.13 - - [10/Mar/2016:19:29:25 +0100] "GET /etc/lib/pChart2/examples/index.php?Action=View&Script=../../../../cnf/db.php HTTP/1.1" 404 151 "-" "HTTP_Request2/2.2.1 (http://pear.php.net/package/http_request2) PHP/5.3.16""##;
 

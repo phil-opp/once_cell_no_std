@@ -1,104 +1,129 @@
 // Forked from `once_cell v1.21.3` crate by @matklad
 // Original code available at https://github.com/matklad/once_cell/tree/v1.21.3
 
-//! # Overview
-//!
-//! `once_cell_no_std` provides a `no_std` [`OnceCell`] type that implements [`Sync`] and **can be used in
-//! statics**. It does _not_ use spinlocks or any other form of blocking. Instead, concurrent
-//! initialization is reported as an explicit `ConcurrentInitialization` error that the caller can
-//! handle as it likes.
-//!
-//! `OnceCell` might store arbitrary non-`Copy` types, can be assigned to at most once and provide direct access
-//! to the stored contents. In a nutshell, API looks *roughly* like this:
-//!
-//! ```rust,ignore
-//! impl OnceCell<T> {
-//!     fn new() -> OnceCell<T> { ... }
-//!     fn set(&self, value: T) -> Result<(), SetError<T>> { ... }
-//!     fn get(&self) -> Option<&T> { ... }
-//! }
-//! ```
-//!
-//! Note that the `set` method requires only a shared reference, so it can also be used in
-//! non-mutable `static`s.
-//!
-//! ## Example
-//!
-//! ```rust
-//! use std::{env, io};
-//!
-//! use once_cell_no_std::OnceCell;
-//!
-//! #[derive(Debug)]
-//! pub struct Logger {
-//!     // ...
-//! }
-//! static INSTANCE: OnceCell<Logger> = OnceCell::new();
-//!
-//! impl Logger {
-//!     pub fn global() -> &'static Logger {
-//!         INSTANCE.get().expect("logger is not initialized")
-//!     }
-//!
-//!     fn from_cli(args: env::Args) -> Result<Logger, std::io::Error> {
-//!        // ...
-//! #      Ok(Logger {})
-//!     }
-//! }
-//!
-//! fn main() {
-//!     let logger = Logger::from_cli(env::args()).unwrap();
-//!     INSTANCE.set(logger).unwrap();
-//!     // use `Logger::global()` from now on
-//! }
-//! ```
+#![doc = include_str!("../README.md")]
 //!
 //! # Implementation details
 //!
 //! The implementation is heavily based on the
 //! [`once_cell`](https://github.com/matklad/once_cell) crate by @matklad, especially the
 //! [implementation for parking-lot](https://github.com/matklad/once_cell/blob/master/src/imp_pl.rs).
-//!
-//! # Related crates
-//!
-//! This crate was forked from the great
-//! [`once_cell` crate](https://docs.rs/once_cell/1.21.3/once_cell/). The original `once_cell` crate
-//! provides two flavors of `OnceCell` types: [`unsync::OnceCell`][unsync-once-cell] and
-//! [`sync::OnceCell`][sync-once-cell]. The following
-//! table compares the types against `once_cell_no_std::OnceCell`:
-//!
-//! |                                    | `once_cell_no_std::OnceCell`              | [`once_cell::sync::OnceCell`][sync-once-cell]                                                                       | [`once_cell::unsync::OnceCell`][unsync-once-cell] |
-//! | ---------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-//! | implements `Sync`                  | yes                                       | yes                                                                                                                 | no                                                |
-//! | concurrent initialization leads to | `ConcurrentInitialization` error returned | thread blocked                                                                                                      | cannot happen                                     |
-//! | `no_std` supported                 | yes                                       | partially (requires [`critical-section`](https://docs.rs/critical-section/latest/critical_section/) implementation) | yes                                               |
-//!
-//! Parts of `once_cell` API are included into `std`/`core` [as of Rust 1.70.0](https://github.com/rust-lang/rust/pull/105587).
-//! The following table compares `once_cell_no_std::OnceCell` against the [`core::cell::OnceCell`] and [`std::sync::OnceLock`] types:
-//!
-//! |                                    | `once_cell_no_std::OnceCell`              | [`std::sync::OnceLock`] | [`core::cell::OnceCell`] |
-//! | ---------------------------------- | ----------------------------------------- | ----------------------- | ------------------------ |
-//! | implements `Sync`                  | yes                                       | yes                     | no                       |
-//! | concurrent initialization leads to | `ConcurrentInitialization` error returned | thread blocked          | cannot happen            |
-//! | `no_std` supported                 | yes                                       | no                      | yes                      |
-//!
-//! For more related crates, check out the [README of `once_cell`](https://github.com/matklad/once_cell?tab=readme-ov-file#related-crates).
-//!
-//! [unsync-once-cell]: https://docs.rs/once_cell/1.21.3/once_cell/unsync/struct.OnceCell.html
-//! [sync-once-cell]: https://docs.rs/once_cell/1.21.3/once_cell/sync/struct.OnceCell.html
-//! [`core::cell::OnceCell`]: https://doc.rust-lang.org/stable/core/cell/struct.OnceCell.html
-//! [`std::sync::OnceLock`]: https://doc.rust-lang.org/stable/std/sync/struct.OnceLock.html
-
 #![no_std]
+#![deny(missing_docs)]
+#![warn(clippy::undocumented_unsafe_blocks)]
+// This crate must not panic: a single reachable panic pulls `core::panicking` and the formatting
+// machinery into every binary that links it, and breaks users who forbid panics outright. These
+// lints catch the ways a panic is usually introduced; `ci/no-panic.sh` checks the compiled output
+// for the ways they cannot see, such as `assert!`.
+#![warn(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
 
 use core::{fmt, mem};
 
+/// Defines a function that is `const` everywhere except under `--cfg loom`, whose atomics cannot
+/// be constructed in a const context. The body is written once.
+macro_rules! const_fn {
+    ($(#[$attr:meta])* $vis:vis const fn $($rest:tt)*) => {
+        $(#[$attr])*
+        #[cfg(not(loom))]
+        $vis const fn $($rest)*
+
+        $(#[$attr])*
+        #[cfg(loom)]
+        $vis fn $($rest)*
+    };
+}
+
 mod imp;
+mod loom;
 pub mod error;
+
+#[cfg(no_panic_check)]
+mod no_panic_check;
 
 use imp::OnceCell as Imp;
 
-use crate::error::{ConcurrentInitialization, GetError, InitError, InsertError, SetError};
+use crate::error::{ConcurrentInitialization, InitError, InsertError, SetError};
+
+/// The outcome of a successful [`OnceCell::get_or_insert`] call.
+///
+/// Either variant means the cell holds a value and that [`stored`](Self::stored) hands out a
+/// reference to it. They differ only in _whose_ value that is: the one passed to `get_or_insert`,
+/// or one that an earlier caller had already put there.
+///
+/// # Example
+///
+/// ```
+/// use once_cell_no_std::{Insertion, OnceCell};
+///
+/// let cell = OnceCell::new();
+///
+/// // the cell was empty, so the value went in
+/// let insertion = cell.get_or_insert(92).unwrap();
+/// assert_eq!(insertion, Insertion::Inserted(&92));
+/// assert!(insertion.was_inserted());
+///
+/// // the cell was full, so the value is handed back instead of being dropped
+/// let insertion = cell.get_or_insert(62).unwrap();
+/// assert_eq!(insertion, Insertion::AlreadyInitialized { stored: &92, rejected: 62 });
+/// assert_eq!(insertion.into_rejected_value(), Some(62));
+///
+/// // either way, `stored` is the value that is in the cell
+/// assert_eq!(cell.get_or_insert(17).unwrap().stored(), &92);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Insertion<'a, T> {
+    /// The cell was empty, so the value was inserted into it.
+    Inserted(&'a T),
+    /// The cell already held a value, which was left untouched.
+    AlreadyInitialized {
+        /// A reference to the value that is stored in the cell.
+        stored: &'a T,
+        /// The value that was not inserted.
+        rejected: T,
+    },
+}
+
+impl<'a, T> Insertion<'a, T> {
+    /// Returns a reference to the value that is stored in the cell.
+    ///
+    /// This is the value passed to [`get_or_insert`](OnceCell::get_or_insert) for
+    /// [`Inserted`](Self::Inserted), and the value an earlier caller stored for
+    /// [`AlreadyInitialized`](Self::AlreadyInitialized). In both cases it is the value that
+    /// [`OnceCell::get`] returns from now on, since an initialized cell keeps its value.
+    #[inline]
+    #[must_use]
+    pub fn stored(&self) -> &'a T {
+        match self {
+            Insertion::Inserted(stored) | Insertion::AlreadyInitialized { stored, .. } => stored,
+        }
+    }
+
+    /// Returns whether the value was inserted into the cell.
+    #[inline]
+    #[must_use]
+    pub fn was_inserted(&self) -> bool {
+        matches!(self, Insertion::Inserted(_))
+    }
+
+    /// Returns the value that was not inserted, or `None` if it was.
+    #[inline]
+    #[must_use]
+    pub fn into_rejected_value(self) -> Option<T> {
+        match self {
+            Insertion::Inserted(_) => None,
+            Insertion::AlreadyInitialized { rejected, .. } => Some(rejected),
+        }
+    }
+}
 
 /// A thread-safe cell which can be written to only once.
 ///
@@ -145,46 +170,14 @@ use crate::error::{ConcurrentInitialization, GetError, InitError, InsertError, S
 ///
 /// Since this type never blocks, it is up to the caller to decide what to do when it runs into a
 /// concurrent initialization. Every method that can run into it reports it as an explicit error,
-/// so a caller that wants to wait can simply retry:
-///
-/// ```
-/// use once_cell_no_std::{error::ConcurrentInitialization, OnceCell};
-///
-/// /// Returns the value of the cell, initializing it with `init` if it is still empty.
-/// ///
-/// /// Spins until the value is available if another caller is initializing the cell.
-/// fn get_or_spin<T>(cell: &OnceCell<T>, mut init: impl FnMut() -> T) -> &T {
-///     loop {
-///         // `&mut init` is passed instead of `init` so that it survives for the next attempt
-///         match cell.get_or_init(&mut init) {
-///             Ok(value) => return value,
-///             // another caller is initializing the cell: retry in a busy loop
-///             Err(ConcurrentInitialization) => core::hint::spin_loop(),
-///         }
-///     }
-/// }
-///
-/// let cell = OnceCell::new();
-/// assert_eq!(get_or_spin(&cell, || "Hello, World!"), &"Hello, World!");
-/// // the init function is not called for an already initialized cell
-/// assert_eq!(get_or_spin(&cell, || unreachable!()), &"Hello, World!");
-/// ```
-///
-/// Note that this spins, which is only appropriate if the initialization is short and the
-/// execution context allows it. Depending on the system, waiting for an interrupt, yielding to a
-/// scheduler, or reporting the error to the caller might be the better choice.
-///
-/// The above spinning helper is similar to the lazy initialization that
-/// [`spin::Once`] and the [`lazy_static`] crate (with its `spin_no_std` feature) provide for
-/// `no_std` environments. The advantage of using this crate is that you can easily switch to a
-/// custom wait strategy later (e.g. wait for next interrupt instead of busy-looping).
+/// so a caller that wants to wait can simply retry. See
+/// [Waiting for a concurrent initialization](crate#waiting-for-a-concurrent-initialization) for a
+/// spin-retry helper, how it compares to `spin::Once` and `lazy_static`, and when spinning is the
+/// wrong choice.
 ///
 /// If the value already exists instead of being computed by an init function, use
-/// [`set`](Self::set) or [`insert`](Self::insert) in the same way: their errors hand the value
-/// back, so the retry does not need to clone it.
-///
-/// [`spin::Once`]: https://docs.rs/spin/latest/spin/once/struct.Once.html
-/// [`lazy_static`]: https://docs.rs/lazy_static/latest/lazy_static/
+/// [`set`](Self::set) or [`get_or_insert`](Self::get_or_insert) in the same way: their errors hand
+/// the value back, so the retry does not need to clone it.
 pub struct OnceCell<T>(Imp<T>);
 
 impl<T> Default for OnceCell<T> {
@@ -195,14 +188,20 @@ impl<T> Default for OnceCell<T> {
 
 impl<T: fmt::Debug> fmt::Debug for OnceCell<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.try_get() {
-            Ok(v) => f.debug_tuple("OnceCell").field(v).finish(),
-            Err(GetError::Uninitialized) => f.write_str("OnceCell(Uninit)"),
-            Err(GetError::ConcurrentInitialization) => f.write_str("OnceCell(Initializing)"),
+        match self.get_or_reason() {
+            Ok(value) => f.debug_tuple("OnceCell").field(value).finish(),
+            Err(CellState::Initializing) => f.write_str("OnceCell(Initializing)"),
+            Err(_) => f.write_str("OnceCell(Uninit)"),
         }
     }
 }
 
+/// Clones the cell, and the value it holds if there is one.
+///
+/// A cell that another caller is currently initializing counts as empty, because this type never
+/// blocks: the clone is empty, and initializing it later has no effect on the original. Cloning a
+/// cell that is being written to concurrently is therefore racy by nature — whether the value is
+/// carried over depends on the timing.
 impl<T: Clone> Clone for OnceCell<T> {
     fn clone(&self) -> OnceCell<T> {
         match self.get() {
@@ -225,6 +224,13 @@ impl<T> From<T> for OnceCell<T> {
     }
 }
 
+/// Compares the values the two cells hold, if any.
+///
+/// Two empty cells are equal, and an empty cell differs from a full one. A cell that another
+/// caller is currently initializing counts as empty, so it compares equal to an empty cell and
+/// unequal to a full one — including to the value it is about to hold. Comparing a cell that is
+/// being written to concurrently is therefore racy by nature, and the result can change from one
+/// call to the next.
 impl<T: PartialEq> PartialEq for OnceCell<T> {
     fn eq(&self, other: &OnceCell<T>) -> bool {
         self.get() == other.get()
@@ -234,14 +240,22 @@ impl<T: PartialEq> PartialEq for OnceCell<T> {
 impl<T: Eq> Eq for OnceCell<T> {}
 
 impl<T> OnceCell<T> {
-    /// Creates a new empty cell.
-    pub const fn new() -> OnceCell<T> {
-        OnceCell(Imp::new())
+    const_fn! {
+        /// Creates a new empty cell.
+        #[inline]
+        #[must_use]
+        pub const fn new() -> OnceCell<T> {
+            OnceCell(Imp::new())
+        }
     }
 
-    /// Creates a new initialized cell.
-    pub const fn with_value(value: T) -> OnceCell<T> {
-        OnceCell(Imp::with_value(value))
+    const_fn! {
+        /// Creates a new initialized cell.
+        #[inline]
+        #[must_use]
+        pub const fn with_value(value: T) -> OnceCell<T> {
+            OnceCell(Imp::with_value(value))
+        }
     }
 
     /// Returns whether the cell is initialized.
@@ -249,8 +263,9 @@ impl<T> OnceCell<T> {
     /// This method never blocks. It only reports a snapshot of the cell state, which might have
     /// changed again by the time the returned value is used.
     ///
-    /// Prefer [`get`](Self::get) or [`try_get`](Self::try_get) if you need the value itself: they
-    /// perform the same check, but hand out a reference in the same step.
+    /// Prefer [`get`](Self::get) if you need the value itself: it performs the same check, but
+    /// hands out a reference in the same step. Use [`state`](Self::state) if you also need to know
+    /// whether an initialization is currently in progress.
     ///
     /// # Example
     ///
@@ -263,6 +278,8 @@ impl<T> OnceCell<T> {
     /// cell.set(92).unwrap();
     /// assert!(cell.is_initialized());
     /// ```
+    #[inline]
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.0.is_initialized()
     }
@@ -272,38 +289,79 @@ impl<T> OnceCell<T> {
     /// Returns `None` if the cell is empty, or being initialized. This
     /// method never blocks.
     ///
-    /// Use [`try_get`](Self::try_get) if you need to distinguish these two cases.
-    pub fn get(&self) -> Option<&T> {
-        self.try_get().ok()
-    }
-
-    /// Gets the reference to the underlying value or report why it is not available.
+    /// The two cases are not distinguished here, because neither one supports a decision: an empty
+    /// cell might be initialized by the time the caller acts on the `None`, and an initialization
+    /// in progress might fail and leave the cell empty again.
     ///
-    /// This method is similar [`get`](Self::get), but it returns a detailed [`GetError`] instead
-    /// of `None` if the value is not available.
-    ///
-    /// The method returns [`GetError::Uninitialized`] if the cell is empty and
-    /// [`GetError::ConcurrentInitialization`] if another caller is currently initializing it.
-    /// Like `get`, this method never blocks.
-    ///
-    /// The returned error is a snapshot of the cell state, which might have changed again by the
-    /// time the error is handled. See [`GetError`] for details.
+    /// Use [`get_or_init`](Self::get_or_init), [`set`](Self::set), or [`get_or_insert`](Self::get_or_insert)
+    /// when the difference has to be acted upon. They resolve the race atomically and report
+    /// contention as a [`ConcurrentInitialization`] error that describes the cell at the instant
+    /// of the attempt, rather than at some earlier point in time. Use [`state`](Self::state) when
+    /// the difference only needs to be reported, as in logging or a health check.
     ///
     /// # Example
     ///
     /// ```
-    /// use once_cell_no_std::{OnceCell, error::GetError};
+    /// use once_cell_no_std::OnceCell;
     ///
     /// let cell = OnceCell::new();
-    /// assert_eq!(cell.try_get(), Err(GetError::Uninitialized));
+    /// assert_eq!(cell.get(), None);
     ///
     /// cell.set(92).unwrap();
-    /// assert_eq!(cell.try_get(), Ok(&92));
+    /// assert_eq!(cell.get(), Some(&92));
     /// ```
-    pub fn try_get(&self) -> Result<&T, GetError> {
-        self.0.check_initialized()?;
-        // Safe b/c value is initialized.
-        Ok(unsafe { self.get_unchecked() })
+    #[inline]
+    #[must_use]
+    pub fn get(&self) -> Option<&T> {
+        self.get_or_reason().ok()
+    }
+
+    /// Gets the value, or the state that explains why it is not available.
+    ///
+    /// This is the primitive that [`get`](Self::get) and the [`Debug`](fmt::Debug) implementation
+    /// are built from. It exists to keep the `unsafe` read behind a single safe interface, and to
+    /// answer from one atomic load, so that the reported state and the value cannot disagree.
+    ///
+    /// The `Err` value is never [`CellState::Initialized`].
+    ///
+    /// This is deliberately not public: [`state`](Self::state) already exposes the state, and
+    /// because `Initialized` is stable, `state` followed by `get` observes the same thing without
+    /// needing a combined accessor.
+    #[inline]
+    fn get_or_reason(&self) -> Result<&T, CellState> {
+        match self.0.state() {
+            // SAFETY: the `Acquire` load in `state` reported the cell as initialized, which also
+            // synchronizes the write of the value to this thread.
+            CellState::Initialized => Ok(unsafe { self.get_unchecked() }),
+            state => Err(state),
+        }
+    }
+
+    /// Returns a snapshot of the cell state.
+    ///
+    /// Unlike [`is_initialized`](Self::is_initialized), this distinguishes an empty cell from one
+    /// that another caller is currently initializing. This method never blocks.
+    ///
+    /// The result describes the cell at the moment of the call and is intended for reporting, not
+    /// for deciding what to do next. See [`CellState`] for why, and for which of the three states
+    /// can be relied upon afterwards.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use once_cell_no_std::{CellState, OnceCell};
+    ///
+    /// let cell = OnceCell::new();
+    /// assert_eq!(cell.state(), CellState::Uninitialized);
+    ///
+    /// cell.set("hello").unwrap();
+    /// assert_eq!(cell.state(), CellState::Initialized);
+    /// assert_eq!(cell.get(), Some(&"hello"));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn state(&self) -> CellState {
+        self.0.state()
     }
 
     /// Gets the mutable reference to the underlying value.
@@ -313,7 +371,7 @@ impl<T> OnceCell<T> {
     /// Unlike [`get`](Self::get), this is unambiguous: a `None` return value always means that
     /// the cell is empty, never that an initialization is in progress. Since this method requires
     /// `&mut` access, no other caller can hold the shared reference that a concurrent
-    /// initialization needs, so there is no `try_get_mut` counterpart.
+    /// initialization needs, so the ambiguity cannot arise in the first place.
     ///
     /// This method is allowed to violate the invariant of writing to a `OnceCell`
     /// at most once because it requires `&mut` access to `self`. As with all
@@ -327,6 +385,7 @@ impl<T> OnceCell<T> {
     /// cell = OnceCell::new();
     /// ```
     #[inline]
+    #[must_use]
     pub fn get_mut(&mut self) -> Option<&mut T> {
         self.0.get_mut()
     }
@@ -339,8 +398,11 @@ impl<T> OnceCell<T> {
     /// Caller must ensure that the cell is in initialized state, and that
     /// the contents are acquired by (synchronized to) this thread.
     #[inline]
+    #[must_use]
     pub unsafe fn get_unchecked(&self) -> &T {
-        self.0.get_unchecked()
+        // SAFETY: the caller guarantees that the cell is initialized and synchronized to this
+        // thread, which is exactly what the inner method requires.
+        unsafe { self.0.get_unchecked() }
     }
 
     /// Sets the contents of this cell to `value`.
@@ -352,7 +414,7 @@ impl<T> OnceCell<T> {
     /// Both error variants give `value` back to the caller, so that it can be reused, e.g. to
     /// retry after a concurrent initialization has finished.
     ///
-    /// Use [`insert`](Self::insert) if you also need a reference to the value that ends up in the
+    /// Use [`get_or_insert`](Self::get_or_insert) if you also need a reference to the value that ends up in the
     /// cell.
     ///
     /// # Example
@@ -374,68 +436,101 @@ impl<T> OnceCell<T> {
     /// }
     /// ```
     pub fn set(&self, value: T) -> Result<(), SetError<T>> {
-        match self.insert(value) {
-            Ok(_) => Ok(()),
-            Err(error) => Err(error.into()),
+        match self.get_or_insert(value)? {
+            Insertion::Inserted(_) => Ok(()),
+            Insertion::AlreadyInitialized { rejected, .. } => {
+                Err(SetError::AlreadyInitialized(rejected))
+            }
         }
     }
 
-    /// Like [`set`](Self::set), but also returns a reference to the final cell value.
+    /// Gets the contents of the cell, initializing it with `value` if the cell was empty.
     ///
-    /// This method fails in the same cases as [`set`](Self::set), and its [`InsertError`] hands
-    /// `value` back in the same way. The difference is that the error additionally contains a
-    /// reference to the value stored in the cell, which ties it to the borrow of `self`. Use
-    /// [`set`](Self::set) if you need an error that can be propagated independently of the cell.
+    /// This is [`get_or_init`](Self::get_or_init) for a value that already exists, instead of one
+    /// computed by a closure. Whether or not `value` is the one that ends up in the cell, the
+    /// returned [`Insertion`] hands out a reference to whatever is stored:
+    ///
+    /// ```
+    /// # use once_cell_no_std::OnceCell;
+    /// # let cell = OnceCell::new();
+    /// # let value = 92;
+    /// let stored: &i32 = cell.get_or_insert(value)?.stored();
+    /// # Ok::<(), once_cell_no_std::error::InsertError<i32>>(())
+    /// ```
+    ///
+    /// An already initialized cell is therefore not an error. The only failure is a concurrent
+    /// initialization by another caller, which leaves no value to hand out at all. Its
+    /// [`InsertError`] gives `value` back, so it can be reused for a retry rather than dropped.
+    ///
+    /// Use [`set`](Self::set) instead when being the caller that initializes the cell is the point,
+    /// rather than obtaining the value: it reports an already initialized cell as an error, and its
+    /// [`SetError`] does not borrow the cell, so it can be propagated independently.
     ///
     /// # Example
     ///
     /// ```
-    /// use once_cell_no_std::{OnceCell, error::InsertError};
+    /// use once_cell_no_std::{Insertion, OnceCell};
     ///
     /// let cell = OnceCell::new();
     /// assert!(cell.get().is_none());
     ///
-    /// assert_eq!(cell.insert(92), Ok(&92));
+    /// assert_eq!(cell.get_or_insert(92), Ok(Insertion::Inserted(&92)));
     /// assert_eq!(
-    ///     cell.insert(62),
-    ///     Err(InsertError::AlreadyInitialized { stored: &92, value: 62 })
+    ///     cell.get_or_insert(62),
+    ///     Ok(Insertion::AlreadyInitialized { stored: &92, rejected: 62 })
     /// );
     ///
-    /// assert!(cell.get().is_some());
+    /// assert_eq!(cell.get(), Some(&92));
     /// ```
-    pub fn insert(&self, value: T) -> Result<&T, InsertError<'_, T>> {
+    pub fn get_or_insert(&self, value: T) -> Result<Insertion<'_, T>, InsertError<T>> {
         let mut value = Some(value);
-        let res = match self.get_or_init(|| unsafe { value.take().unwrap_unchecked() }) {
-            Ok(res) => res,
+        let stored = match self.get_or_init(|| {
+            debug_assert!(value.is_some(), "init closure called twice");
+            // SAFETY: `imp::try_initialize_inner` contains a single call to the init closure, in
+            // the arm that won the `INCOMPLETE` -> `RUNNING` compare-exchange, and that arm
+            // returns immediately afterwards. The closure therefore runs at most once, so `value`
+            // has not been taken yet.
+            unsafe { value.take().unwrap_unchecked() }
+        }) {
+            Ok(stored) => stored,
             Err(ConcurrentInitialization) => {
-                // The init closure is only called after the cell was exclusively acquired, so a
-                // `ConcurrentInitialization` error means that it never ran and `value` is still
-                // there.
-                let value = value.take().expect("init closure ran despite a concurrent init");
-                return Err(InsertError::ConcurrentInitialization(value));
+                debug_assert!(value.is_some(), "init closure ran despite a concurrent init");
+                // SAFETY: `imp::try_initialize_inner` returns `ConcurrentInitialization` only from
+                // the arm that observed the cell in the `RUNNING` state, which does not call the
+                // init closure. The closure never ran, so `value` is still there.
+                let value = unsafe { value.take().unwrap_unchecked() };
+                return Err(InsertError(value));
             }
         };
-        match value {
-            None => Ok(res),
-            Some(value) => Err(InsertError::AlreadyInitialized { stored: res, value }),
-        }
+        Ok(match value {
+            None => Insertion::Inserted(stored),
+            Some(rejected) => Insertion::AlreadyInitialized { stored, rejected },
+        })
     }
 
     /// Gets the contents of the cell, initializing it with `f` if the cell
     /// was empty.
     ///
-    /// Many threads may call `get_or_init` concurrently with different
-    /// initializing functions, but it is guaranteed that only one function
-    /// will be executed.
+    /// Many callers may invoke `get_or_init` concurrently with different initializing functions,
+    /// but it is guaranteed that at most one of them is executed. The other callers receive a
+    /// [`ConcurrentInitialization`] error and their `f` is dropped without ever being called.
     ///
     /// # Panics
     ///
     /// If `f` panics, the panic is propagated to the caller, and the cell
     /// remains uninitialized.
     ///
-    /// It is an error to reentrantly initialize the cell from `f`. The
-    /// exact outcome is unspecified. Current implementation deadlocks, but
-    /// this may be changed to a panic in the future.
+    /// # Reentrancy
+    ///
+    /// Calling back into the same cell from `f` is safe and never deadlocks, because this type
+    /// never blocks. The cell counts as concurrently initializing while `f` runs, so a nested
+    /// [`get_or_init`](Self::get_or_init), [`set`](Self::set), or [`get_or_insert`](Self::get_or_insert) on the
+    /// same cell returns a [`ConcurrentInitialization`] error.
+    ///
+    /// Note that such a nested call can never succeed, so `f` must be able to make progress
+    /// without it. In particular, retrying in a loop like the one shown in the
+    /// [type documentation](Self#handling-concurrent-initialization) does hang when used
+    /// reentrantly, since the initialization it waits for is the one that is blocked on the loop.
     ///
     /// # Example
     /// ```
@@ -497,7 +592,7 @@ impl<T> OnceCell<T> {
     /// ```
     ///
     /// Note that this is only needed for resources that cannot be recreated. If the value itself
-    /// already exists, prefer [`set`](Self::set) or [`insert`](Self::insert), whose errors
+    /// already exists, prefer [`set`](Self::set) or [`get_or_insert`](Self::get_or_insert), whose errors
     /// hand it back directly.
     ///
     /// # Panics
@@ -505,9 +600,18 @@ impl<T> OnceCell<T> {
     /// If `f` panics, the panic is propagated to the caller, and
     /// the cell remains uninitialized.
     ///
-    /// It is an error to reentrantly initialize the cell from `f`.
-    /// The exact outcome is unspecified. Current implementation
-    /// deadlocks, but this may be changed to a panic in the future.
+    /// # Reentrancy
+    ///
+    /// Calling back into the same cell from `f` is safe and never deadlocks, because this type
+    /// never blocks. The cell counts as concurrently initializing while `f` runs, so a nested
+    /// [`get_or_try_init`](Self::get_or_try_init), [`set`](Self::set), or
+    /// [`get_or_insert`](Self::get_or_insert) on the same cell returns a
+    /// [`InitError::ConcurrentInitialization`] error.
+    ///
+    /// Note that such a nested call can never succeed, so `f` must be able to make progress
+    /// without it. In particular, retrying in a loop like the one shown in the
+    /// [type documentation](Self#handling-concurrent-initialization) does hang when used
+    /// reentrantly, since the initialization it waits for is the one that is blocked on the loop.
     ///
     /// # Example
     /// ```
@@ -536,8 +640,10 @@ impl<T> OnceCell<T> {
 
         self.0.try_initialize(f)?;
 
-        // Safe b/c value is initialized.
         debug_assert!(self.0.is_initialized());
+        // SAFETY: `try_initialize` returned `Ok`, so the cell is initialized and the write is
+        // synchronized to this thread, either because this call performed it or because the
+        // `Acquire` load that observed `COMPLETE` did.
         Ok(unsafe { self.get_unchecked() })
     }
 
@@ -570,6 +676,7 @@ impl<T> OnceCell<T> {
     /// cell.set(92).unwrap();
     /// cell = OnceCell::new();
     /// ```
+    #[inline]
     pub fn take(&mut self) -> Option<T> {
         mem::take(self).into_inner()
     }
@@ -593,4 +700,51 @@ impl<T> OnceCell<T> {
     pub fn into_inner(self) -> Option<T> {
         self.0.into_inner()
     }
+}
+
+/// A snapshot of the state of a [`OnceCell`], returned by [`OnceCell::state`].
+///
+/// # This is an observation, not a decision
+///
+/// The returned state describes the cell at the moment of the call and may have changed again by
+/// the time it is inspected. It is meant for reporting: logging, diagnostics, health checks, and
+/// tests. Driving control flow from it is a mistake, because neither of the two "not available"
+/// states supports the conclusion it seems to invite:
+///
+/// - [`Uninitialized`](Self::Uninitialized) does not mean an initialization will succeed. Another
+///   caller may start one before you do.
+/// - [`Initializing`](Self::Initializing) does not mean an initialization will complete. The init
+///   function may fail or panic and return the cell to `Uninitialized`, so a caller that waits for
+///   it to finish may wait forever.
+///
+/// Use [`get_or_init`](OnceCell::get_or_init), [`set`](OnceCell::set), or
+/// [`get_or_insert`](OnceCell::get_or_insert) when the answer has to be acted upon: they resolve the race
+/// atomically and report contention as of the instant of the attempt.
+///
+/// [`Initialized`](Self::Initialized) is the one state that is stable: a cell only leaves it
+/// through `&mut` access, which no other caller can hold at the same time. Observing it therefore
+/// does guarantee that a subsequent [`get`](OnceCell::get) returns `Some`.
+///
+/// # Example
+///
+/// ```
+/// use once_cell_no_std::{CellState, OnceCell};
+///
+/// let cell = OnceCell::new();
+/// assert_eq!(cell.state(), CellState::Uninitialized);
+///
+/// cell.set(92).unwrap();
+/// assert_eq!(cell.state(), CellState::Initialized);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CellState {
+    /// The cell is empty and no initialization function is currently running.
+    ///
+    /// Note that the cell also returns to this state when an initialization function fails or
+    /// panics, so this state does not mean that no initialization was attempted yet.
+    Uninitialized,
+    /// Another caller is currently running an initialization function for this cell.
+    Initializing,
+    /// The cell holds a value.
+    Initialized,
 }

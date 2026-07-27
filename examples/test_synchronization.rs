@@ -9,7 +9,7 @@
 
 use std::hint::spin_loop;
 
-use once_cell_no_std::{error::ConcurrentInitialization, OnceCell};
+use once_cell_no_std::{OnceCell, error::ConcurrentInitialization};
 
 const N_THREADS: usize = 32;
 const N_ROUNDS: usize = 1_000_000;

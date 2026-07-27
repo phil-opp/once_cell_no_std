@@ -1,3 +1,20 @@
+//! The error types returned by the fallible [`OnceCell`](crate::OnceCell) methods.
+//!
+//! Every one of them reports some combination of the same three conditions, and each adds exactly
+//! one thing over the last:
+//!
+//! | error | reports | returned by |
+//! | ----- | ------- | ----------- |
+//! | [`ConcurrentInitialization`] | another caller is initializing the cell | [`get_or_init`](crate::OnceCell::get_or_init) |
+//! | [`InitError`] | the above, plus a failing init function | [`get_or_try_init`](crate::OnceCell::get_or_try_init) |
+//! | [`InsertError`] | the above, plus the value that was not written | [`get_or_insert`](crate::OnceCell::get_or_insert) |
+//! | [`SetError`] | the above, plus an already initialized cell | [`set`](crate::OnceCell::set) |
+//!
+//! Note that an already initialized cell is only an error for [`set`](crate::OnceCell::set), whose purpose is to *be*
+//! the caller that initializes the cell. [`get_or_insert`](crate::OnceCell::get_or_insert) reports
+//! it as the [`Insertion::AlreadyInitialized`](crate::Insertion::AlreadyInitialized) outcome
+//! instead, because the caller still ends up with a reference to a stored value.
+
 use core::{
     error::Error,
     fmt::{self, Display},
@@ -22,47 +39,6 @@ impl Display for ConcurrentInitialization {
 
 impl Error for ConcurrentInitialization {}
 
-/// The reason why the value of a `OnceCell` is not available.
-///
-/// Returned by [`OnceCell::try_get`](crate::OnceCell::try_get), which is the fallible counterpart
-/// of [`OnceCell::get`](crate::OnceCell::get).
-///
-/// Both variants are a _snapshot_ of the cell state at the time of the call. The state might
-/// already have changed again when this error is handled, so the variants are best treated as
-/// hints, not as guarantees. In particular, an [`Uninitialized`](Self::Uninitialized) error is no
-/// promise that a subsequent initialization attempt will succeed, and a
-/// [`ConcurrentInitialization`](Self::ConcurrentInitialization) error is no promise that the
-/// concurrent initialization will complete.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GetError {
-    /// The cell is empty and no initialization function is currently running.
-    ///
-    /// Note that the cell also returns to this state when an initialization function returns an
-    /// error or panics, so this variant does not mean that no initialization was attempted yet.
-    Uninitialized,
-    /// There is another init function running concurrently for the same `OnceCell`.
-    ///
-    /// See [`ConcurrentInitialization`] for details.
-    ConcurrentInitialization,
-}
-
-impl Display for GetError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            GetError::Uninitialized => write!(f, "the cell is not initialized"),
-            GetError::ConcurrentInitialization => ConcurrentInitialization.fmt(f),
-        }
-    }
-}
-
-impl Error for GetError {}
-
-impl From<ConcurrentInitialization> for GetError {
-    fn from(_: ConcurrentInitialization) -> Self {
-        GetError::ConcurrentInitialization
-    }
-}
-
 /// The cell could not be initialized.
 ///
 /// Returned by [`OnceCell::get_or_try_init`](crate::OnceCell::get_or_try_init), which fails either
@@ -86,6 +62,7 @@ pub enum InitError<E> {
 impl<E> InitError<E> {
     /// Returns the error of the init function, or `None` for a
     /// [`ConcurrentInitialization`](Self::ConcurrentInitialization) error.
+    #[must_use]
     pub fn init_function_error(self) -> Option<E> {
         match self {
             InitError::InitFunctionFailed(error) => Some(error),
@@ -139,7 +116,11 @@ pub enum SetError<T> {
 
 impl<T> SetError<T> {
     /// Returns the value that was not written to the cell.
-    pub fn into_inner(self) -> T {
+    ///
+    /// This is the value that was handed to [`OnceCell::set`](crate::OnceCell::set), never the one
+    /// stored in the cell: a `OnceCell` does not give up a value it has accepted.
+    #[must_use]
+    pub fn into_rejected_value(self) -> T {
         match self {
             SetError::AlreadyInitialized(value) | SetError::ConcurrentInitialization(value) => {
                 value
@@ -172,69 +153,44 @@ impl<T> Display for SetError<T> {
 
 impl<T> Error for SetError<T> {}
 
-impl<T> From<InsertError<'_, T>> for SetError<T> {
-    fn from(error: InsertError<'_, T>) -> Self {
-        match error {
-            InsertError::AlreadyInitialized { value, .. } => SetError::AlreadyInitialized(value),
-            InsertError::ConcurrentInitialization(value) => {
-                SetError::ConcurrentInitialization(value)
-            }
-        }
+impl<T> From<InsertError<T>> for SetError<T> {
+    fn from(error: InsertError<T>) -> Self {
+        SetError::ConcurrentInitialization(error.into_rejected_value())
     }
 }
 
 /// The value could not be inserted into the `OnceCell`.
 ///
-/// Returned by [`OnceCell::insert`](crate::OnceCell::insert). Like [`SetError`], every
-/// variant carries the value that was _not_ inserted back to the caller, so that it can be reused
-/// instead of being dropped.
+/// Returned by [`OnceCell::get_or_insert`](crate::OnceCell::get_or_insert), which fails only
+/// because another caller is initializing the cell. An already initialized cell is _not_ an error
+/// there: the caller still ends up with a reference to a stored value, which
+/// [`Insertion`](crate::Insertion) reports instead.
+///
+/// Carries the value that was not inserted back to the caller, so that it can be reused to retry
+/// once the concurrent initialization has finished, instead of being dropped. See
+/// [`ConcurrentInitialization`] for details on the error condition itself.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum InsertError<'a, T> {
-    /// The cell was already initialized with a different value.
-    AlreadyInitialized {
-        /// A reference to the value that is stored in the cell.
-        stored: &'a T,
-        /// The value that was not inserted.
-        value: T,
-    },
-    /// There is another init function running concurrently for the same `OnceCell`.
-    ///
-    /// Contains the value that was not inserted, so that the operation can be retried once the
-    /// concurrent initialization is finished. See [`ConcurrentInitialization`] for details.
-    ConcurrentInitialization(T),
-}
+pub struct InsertError<T>(pub(crate) T);
 
-impl<T> InsertError<'_, T> {
+impl<T> InsertError<T> {
     /// Returns the value that was not inserted into the cell.
-    pub fn into_inner(self) -> T {
-        match self {
-            InsertError::AlreadyInitialized { value, .. }
-            | InsertError::ConcurrentInitialization(value) => value,
-        }
+    #[must_use]
+    pub fn into_rejected_value(self) -> T {
+        self.0
     }
 }
 
 // Manual impl to avoid a `T: Debug` bound, see [`SetError`].
-impl<T> fmt::Debug for InsertError<'_, T> {
+impl<T> fmt::Debug for InsertError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InsertError::AlreadyInitialized { .. } => {
-                f.write_str("InsertError::AlreadyInitialized { .. }")
-            }
-            InsertError::ConcurrentInitialization(_) => {
-                f.write_str("InsertError::ConcurrentInitialization(..)")
-            }
-        }
+        f.write_str("InsertError(..)")
     }
 }
 
-impl<T> Display for InsertError<'_, T> {
+impl<T> Display for InsertError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InsertError::AlreadyInitialized { .. } => write!(f, "the cell is already initialized"),
-            InsertError::ConcurrentInitialization(_) => ConcurrentInitialization.fmt(f),
-        }
+        ConcurrentInitialization.fmt(f)
     }
 }
 
-impl<T> Error for InsertError<'_, T> {}
+impl<T> Error for InsertError<T> {}
