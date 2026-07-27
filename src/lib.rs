@@ -338,6 +338,12 @@ impl<T: fmt::Debug> fmt::Debug for OnceCell<T> {
     }
 }
 
+/// Clones the cell, and the value it holds if there is one.
+///
+/// A cell that another caller is currently initializing counts as empty, because this type never
+/// blocks: the clone is empty, and initializing it later has no effect on the original. Cloning a
+/// cell that is being written to concurrently is therefore racy by nature — whether the value is
+/// carried over depends on the timing.
 impl<T: Clone> Clone for OnceCell<T> {
     fn clone(&self) -> OnceCell<T> {
         match self.get() {
@@ -360,6 +366,13 @@ impl<T> From<T> for OnceCell<T> {
     }
 }
 
+/// Compares the values the two cells hold, if any.
+///
+/// Two empty cells are equal, and an empty cell differs from a full one. A cell that another
+/// caller is currently initializing counts as empty, so it compares equal to an empty cell and
+/// unequal to a full one — including to the value it is about to hold. Comparing a cell that is
+/// being written to concurrently is therefore racy by nature, and the result can change from one
+/// call to the next.
 impl<T: PartialEq> PartialEq for OnceCell<T> {
     fn eq(&self, other: &OnceCell<T>) -> bool {
         self.get() == other.get()
