@@ -409,6 +409,102 @@ fn get_or_insert_reports_an_inserted_value() {
     assert_eq!(insertion.into_rejected_value(), None);
 }
 
+/// Drives the contention exit of `get_or_insert` without any threads: a reentrant call sees the
+/// cell in the initializing state, which is the one situation where the init closure must not have
+/// run. Being single-threaded, this covers that `unwrap_unchecked` deterministically, including
+/// under Miri.
+#[test]
+fn get_or_insert_reports_contention_when_called_reentrantly() {
+    let cell: OnceCell<String> = OnceCell::new();
+    let reentrant = cell
+        .get_or_init(|| {
+            let error = cell
+                .get_or_insert("inner".to_string())
+                .expect_err("a reentrant insert must report contention");
+            // the closure never ran, so the value comes back intact
+            assert_eq!(error.into_rejected_value(), "inner");
+            "outer".to_string()
+        })
+        .unwrap();
+    assert_eq!(reentrant, "outer");
+    assert_eq!(cell.get(), Some(&"outer".to_string()));
+}
+
+/// `get_or_insert` takes values out of an `Option` with `unwrap_unchecked` on both of its exits,
+/// relying on the init closure running exactly when the cell was empty and never when the call
+/// loses the race. This hammers all three outcomes concurrently, so that a broken invariant shows
+/// up as a `debug_assert` failure here (and as undefined behavior under Miri) rather than silently.
+#[test]
+fn get_or_insert_upholds_its_init_closure_invariants_under_contention() {
+    let n_tries = if cfg!(miri) { 3 } else { 100 };
+    let n_rivals = 7;
+
+    for round in 0..n_tries {
+        let cell: OnceCell<String> = OnceCell::new();
+        let winner = format!("winner-{round}");
+        // the rivals may only attempt while the winner is inside its init closure, and the winner
+        // may only leave it once every rival has attempted
+        let init_entered = Barrier::new(n_rivals + 1);
+        let rivals_done = Barrier::new(n_rivals + 1);
+        // the winner leaving its closure is not the same as the cell being initialized: the state
+        // only becomes `Initialized` once `get_or_init` has returned
+        let winner_done = Barrier::new(n_rivals + 1);
+        let contended = AtomicUsize::new(0);
+        let already = AtomicUsize::new(0);
+
+        scope(|scope| {
+            let (winner, cell) = (&winner, &cell);
+            let (init_entered, rivals_done) = (&init_entered, &rivals_done);
+            let winner_done = &winner_done;
+            scope.spawn(move || {
+                let inserted = cell
+                    .get_or_init(|| {
+                        init_entered.wait();
+                        rivals_done.wait();
+                        winner.clone()
+                    })
+                    .unwrap();
+                assert_eq!(inserted, winner);
+                winner_done.wait();
+            });
+
+            for rival in 0..n_rivals {
+                let (contended, already) = (&contended, &already);
+                scope.spawn(move || {
+                    let mine = format!("rival-{round}-{rival}");
+                    init_entered.wait();
+                    // the cell is guaranteed to be mid-initialization here
+                    match cell.get_or_insert(mine.clone()) {
+                        Err(error) => {
+                            // the closure never ran, so the value comes back intact
+                            assert_eq!(error.into_rejected_value(), mine);
+                            contended.fetch_add(1, SeqCst);
+                        }
+                        other => panic!("expected a contention error, got {other:?}"),
+                    }
+                    rivals_done.wait();
+                    winner_done.wait();
+
+                    // and again once the winner is done, which must now take the other exit
+                    match cell.get_or_insert(mine.clone()) {
+                        Ok(Insertion::AlreadyInitialized { stored, rejected }) => {
+                            assert_eq!(rejected, mine);
+                            assert_eq!(stored, winner);
+                            already.fetch_add(1, SeqCst);
+                        }
+                        other => panic!("expected an already-initialized insertion, got {other:?}"),
+                    }
+                });
+            }
+        });
+
+        // every rival must have driven both `unwrap_unchecked` sites exactly once
+        assert_eq!(contended.load(SeqCst), n_rivals);
+        assert_eq!(already.load(SeqCst), n_rivals);
+        assert_eq!(cell.get(), Some(&winner));
+    }
+}
+
 #[test]
 fn get_or_insert_works_like_get_or_init_without_a_closure() {
     let cell = OnceCell::new();
