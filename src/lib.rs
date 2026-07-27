@@ -105,53 +105,6 @@ impl<'a, T> Insertion<'a, T> {
     }
 }
 
-/// A snapshot of the state of a [`OnceCell`], returned by [`OnceCell::state`].
-///
-/// # This is an observation, not a decision
-///
-/// The returned state describes the cell at the moment of the call and may have changed again by
-/// the time it is inspected. It is meant for reporting: logging, diagnostics, health checks, and
-/// tests. Driving control flow from it is a mistake, because neither of the two "not available"
-/// states supports the conclusion it seems to invite:
-///
-/// - [`Uninitialized`](Self::Uninitialized) does not mean an initialization will succeed. Another
-///   caller may start one before you do.
-/// - [`Initializing`](Self::Initializing) does not mean an initialization will complete. The init
-///   function may fail or panic and return the cell to `Uninitialized`, so a caller that waits for
-///   it to finish may wait forever.
-///
-/// Use [`get_or_init`](OnceCell::get_or_init), [`set`](OnceCell::set), or
-/// [`get_or_insert`](OnceCell::get_or_insert) when the answer has to be acted upon: they resolve the race
-/// atomically and report contention as of the instant of the attempt.
-///
-/// [`Initialized`](Self::Initialized) is the one state that is stable: a cell only leaves it
-/// through `&mut` access, which no other caller can hold at the same time. Observing it therefore
-/// does guarantee that a subsequent [`get`](OnceCell::get) returns `Some`.
-///
-/// # Example
-///
-/// ```
-/// use once_cell_no_std::{CellState, OnceCell};
-///
-/// let cell = OnceCell::new();
-/// assert_eq!(cell.state(), CellState::Uninitialized);
-///
-/// cell.set(92).unwrap();
-/// assert_eq!(cell.state(), CellState::Initialized);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CellState {
-    /// The cell is empty and no initialization function is currently running.
-    ///
-    /// Note that the cell also returns to this state when an initialization function fails or
-    /// panics, so this state does not mean that no initialization was attempted yet.
-    Uninitialized,
-    /// Another caller is currently running an initialization function for this cell.
-    Initializing,
-    /// The cell holds a value.
-    Initialized,
-}
-
 /// A thread-safe cell which can be written to only once.
 ///
 /// `OnceCell` provides `&` references to the contents without RAII guards.
@@ -752,4 +705,51 @@ impl<T> OnceCell<T> {
     pub fn into_inner(self) -> Option<T> {
         self.0.into_inner()
     }
+}
+
+/// A snapshot of the state of a [`OnceCell`], returned by [`OnceCell::state`].
+///
+/// # This is an observation, not a decision
+///
+/// The returned state describes the cell at the moment of the call and may have changed again by
+/// the time it is inspected. It is meant for reporting: logging, diagnostics, health checks, and
+/// tests. Driving control flow from it is a mistake, because neither of the two "not available"
+/// states supports the conclusion it seems to invite:
+///
+/// - [`Uninitialized`](Self::Uninitialized) does not mean an initialization will succeed. Another
+///   caller may start one before you do.
+/// - [`Initializing`](Self::Initializing) does not mean an initialization will complete. The init
+///   function may fail or panic and return the cell to `Uninitialized`, so a caller that waits for
+///   it to finish may wait forever.
+///
+/// Use [`get_or_init`](OnceCell::get_or_init), [`set`](OnceCell::set), or
+/// [`get_or_insert`](OnceCell::get_or_insert) when the answer has to be acted upon: they resolve the race
+/// atomically and report contention as of the instant of the attempt.
+///
+/// [`Initialized`](Self::Initialized) is the one state that is stable: a cell only leaves it
+/// through `&mut` access, which no other caller can hold at the same time. Observing it therefore
+/// does guarantee that a subsequent [`get`](OnceCell::get) returns `Some`.
+///
+/// # Example
+///
+/// ```
+/// use once_cell_no_std::{CellState, OnceCell};
+///
+/// let cell = OnceCell::new();
+/// assert_eq!(cell.state(), CellState::Uninitialized);
+///
+/// cell.set(92).unwrap();
+/// assert_eq!(cell.state(), CellState::Initialized);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CellState {
+    /// The cell is empty and no initialization function is currently running.
+    ///
+    /// Note that the cell also returns to this state when an initialization function fails or
+    /// panics, so this state does not mean that no initialization was attempted yet.
+    Uninitialized,
+    /// Another caller is currently running an initialization function for this cell.
+    Initializing,
+    /// The cell holds a value.
+    Initialized,
 }
