@@ -134,72 +134,43 @@ impl<T> Display for SetError<T> {
 
 impl<T> Error for SetError<T> {}
 
-impl<T> From<InsertError<'_, T>> for SetError<T> {
-    fn from(error: InsertError<'_, T>) -> Self {
-        match error {
-            InsertError::AlreadyInitialized { value, .. } => SetError::AlreadyInitialized(value),
-            InsertError::ConcurrentInitialization(value) => {
-                SetError::ConcurrentInitialization(value)
-            }
-        }
+impl<T> From<InsertError<T>> for SetError<T> {
+    fn from(error: InsertError<T>) -> Self {
+        SetError::ConcurrentInitialization(error.into_rejected_value())
     }
 }
 
 /// The value could not be inserted into the `OnceCell`.
 ///
-/// Returned by [`OnceCell::insert`](crate::OnceCell::insert). Like [`SetError`], every
-/// variant carries the value that was _not_ inserted back to the caller, so that it can be reused
-/// instead of being dropped.
+/// Returned by [`OnceCell::get_or_insert`](crate::OnceCell::get_or_insert), which fails only
+/// because another caller is initializing the cell. An already initialized cell is _not_ an error
+/// there: the caller still ends up with a reference to a stored value, which
+/// [`Insertion`](crate::Insertion) reports instead.
+///
+/// Carries the value that was not inserted back to the caller, so that it can be reused to retry
+/// once the concurrent initialization has finished, instead of being dropped. See
+/// [`ConcurrentInitialization`] for details on the error condition itself.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum InsertError<'a, T> {
-    /// The cell was already initialized with a different value.
-    AlreadyInitialized {
-        /// A reference to the value that is stored in the cell.
-        stored: &'a T,
-        /// The value that was not inserted.
-        value: T,
-    },
-    /// There is another init function running concurrently for the same `OnceCell`.
-    ///
-    /// Contains the value that was not inserted, so that the operation can be retried once the
-    /// concurrent initialization is finished. See [`ConcurrentInitialization`] for details.
-    ConcurrentInitialization(T),
-}
+pub struct InsertError<T>(pub(crate) T);
 
-impl<T> InsertError<'_, T> {
+impl<T> InsertError<T> {
     /// Returns the value that was not inserted into the cell.
-    ///
-    /// For [`AlreadyInitialized`](Self::AlreadyInitialized) this is the `value` field, never the
-    /// `stored` one.
     pub fn into_rejected_value(self) -> T {
-        match self {
-            InsertError::AlreadyInitialized { value, .. }
-            | InsertError::ConcurrentInitialization(value) => value,
-        }
+        self.0
     }
 }
 
 // Manual impl to avoid a `T: Debug` bound, see [`SetError`].
-impl<T> fmt::Debug for InsertError<'_, T> {
+impl<T> fmt::Debug for InsertError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InsertError::AlreadyInitialized { .. } => {
-                f.write_str("InsertError::AlreadyInitialized { .. }")
-            }
-            InsertError::ConcurrentInitialization(_) => {
-                f.write_str("InsertError::ConcurrentInitialization(..)")
-            }
-        }
+        f.write_str("InsertError(..)")
     }
 }
 
-impl<T> Display for InsertError<'_, T> {
+impl<T> Display for InsertError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InsertError::AlreadyInitialized { .. } => write!(f, "the cell is already initialized"),
-            InsertError::ConcurrentInitialization(_) => ConcurrentInitialization.fmt(f),
-        }
+        ConcurrentInitialization.fmt(f)
     }
 }
 
-impl<T> Error for InsertError<'_, T> {}
+impl<T> Error for InsertError<T> {}

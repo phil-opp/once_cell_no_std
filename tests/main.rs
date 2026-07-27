@@ -7,8 +7,8 @@ use std::{
 };
 
 use once_cell_no_std::{
-    error::{InitError, InsertError, SetError},
-    CellState, OnceCell,
+    error::{InitError, SetError},
+    CellState, Insertion, OnceCell,
 };
 
 #[test]
@@ -365,7 +365,7 @@ fn set_hands_the_value_back_on_error() {
 }
 
 #[test]
-fn insert_hands_the_value_back_on_error() {
+fn get_or_insert_hands_the_value_back_when_it_is_not_inserted() {
     let cell = OnceCell::new();
     let barrier = Barrier::new(2);
     scope(|scope| {
@@ -378,20 +378,42 @@ fn insert_hands_the_value_back_on_error() {
             .unwrap();
         });
         barrier.wait();
-        let err = cell.insert("world".to_string()).unwrap_err();
-        assert_eq!(err, InsertError::ConcurrentInitialization("world".to_string()));
+        // a concurrent initialization is the only failure: there is no value to hand out
+        let err = cell.get_or_insert("world".to_string()).unwrap_err();
         assert_eq!(err.into_rejected_value(), "world");
         barrier.wait();
     });
-    let err = cell.insert("world".to_string()).unwrap_err();
+    // an already initialized cell is not an error, because a stored value is still available
+    let insertion = cell.get_or_insert("world".to_string()).unwrap();
     assert_eq!(
-        err,
-        InsertError::AlreadyInitialized {
+        insertion,
+        Insertion::AlreadyInitialized {
             stored: &"hello".to_string(),
-            value: "world".to_string()
+            rejected: "world".to_string()
         }
     );
-    assert_eq!(err.into_rejected_value(), "world");
+    assert!(!insertion.was_inserted());
+    assert_eq!(insertion.stored(), "hello");
+    assert_eq!(insertion.into_rejected_value(), Some("world".to_string()));
+}
+
+#[test]
+fn get_or_insert_reports_an_inserted_value() {
+    let cell = OnceCell::new();
+    let insertion = cell.get_or_insert("hello".to_string()).unwrap();
+    assert_eq!(insertion, Insertion::Inserted(&"hello".to_string()));
+    assert!(insertion.was_inserted());
+    assert_eq!(insertion.stored(), "hello");
+    assert_eq!(insertion.into_rejected_value(), None);
+}
+
+#[test]
+fn get_or_insert_works_like_get_or_init_without_a_closure() {
+    let cell = OnceCell::new();
+    assert_eq!(cell.get_or_insert(92).unwrap().stored(), &92);
+    // the cell keeps the first value, and later callers still get a reference to it
+    assert_eq!(cell.get_or_insert(62).unwrap().stored(), &92);
+    assert_eq!(cell.get(), Some(&92));
 }
 
 #[test]
