@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 – 2026-07-27
+
 ### Fixed
 
 - `loom` is a dev-dependency again, so it no longer appears in the dependency graph or `Cargo.lock`
