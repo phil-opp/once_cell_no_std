@@ -19,4 +19,71 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: rustup toolchain install 1.81 --profile minimal
-      - run: cargo +1.81 test
+      # Only the library is checked here. The dev-dependencies used by the tests and examples have
+      # their own, faster-moving MSRVs, which are not part of this crate's MSRV promise; building
+      # them would make this job fail for reasons unrelated to our code.
+      - run: cargo +1.81 build --lib
+
+  no_std:
+    name: no_std
+    runs-on: ubuntu-latest
+
+    # The targets used by the other jobs all link `std`, so nothing there would notice an
+    # accidental dependency on it. These targets have no `std` at all.
+    #
+    # Note that this crate needs atomic compare-and-swap and therefore does *not* support CAS-less
+    # targets such as `thumbv6m-none-eabi` (Cortex-M0), AVR, or RISC-V without the `A` extension.
+    strategy:
+      matrix:
+        target:
+          - thumbv7em-none-eabihf # Cortex-M4F/M7F, bare metal
+          - riscv64imac-unknown-none-elf
+          - x86_64-unknown-none
+
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --lib --target ${{ matrix.target }}
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup component add clippy
+      - run: cargo clippy --all-targets -- -D warnings
+
+  rustfmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup component add rustfmt
+      - run: cargo fmt --check
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      # Catches broken intra-doc links, which are easy to miss because a plain `cargo doc` only
+      # warns about them.
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+
+    # The test suite deliberately hammers the `unsafe` initialization path from several threads,
+    # but only Miri actually checks it for undefined behavior and data races.
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - run: cargo +nightly miri test
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
