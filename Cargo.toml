@@ -14,8 +14,8 @@ readme = "README.md"
 documentation = "https://docs.rs/once_cell_no_std"
 
 repository = "https://github.com/phil-opp/once_cell_no_std"
-keywords = ["no_std", "static"]
-categories = ["rust-patterns", "embedded"]
+keywords = ["no_std", "static", "once", "cell", "sync"]
+categories = ["no-std", "rust-patterns", "embedded", "concurrency"]
 
 exclude = ["*.png", "*.svg", "/Cargo.lock.msrv", "rustfmt.toml"]
 
