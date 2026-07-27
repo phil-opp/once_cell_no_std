@@ -95,6 +95,8 @@
 //! [`std::sync::OnceLock`]: https://doc.rust-lang.org/stable/std/sync/struct.OnceLock.html
 
 #![no_std]
+#![deny(missing_docs)]
+#![warn(clippy::undocumented_unsafe_blocks)]
 
 use core::{fmt, mem};
 
@@ -429,7 +431,8 @@ impl<T> OnceCell<T> {
     /// needing a combined accessor.
     fn get_or_reason(&self) -> Result<&T, CellState> {
         match self.0.state() {
-            // Safe b/c the `Acquire` load in `state` reported the value as initialized.
+            // SAFETY: the `Acquire` load in `state` reported the cell as initialized, which also
+            // synchronizes the write of the value to this thread.
             CellState::Initialized => Ok(unsafe { self.get_unchecked() }),
             state => Err(state),
         }
@@ -578,6 +581,7 @@ impl<T> OnceCell<T> {
     /// ```
     pub fn get_or_insert(&self, value: T) -> Result<Insertion<'_, T>, InsertError<T>> {
         let mut value = Some(value);
+        // SAFETY: `get_or_init` runs the closure at most once, and `value` is `Some` until then.
         let stored = match self.get_or_init(|| unsafe { value.take().unwrap_unchecked() }) {
             Ok(stored) => stored,
             Err(ConcurrentInitialization) => {
@@ -726,8 +730,10 @@ impl<T> OnceCell<T> {
 
         self.0.try_initialize(f)?;
 
-        // Safe b/c value is initialized.
         debug_assert!(self.0.is_initialized());
+        // SAFETY: `try_initialize` returned `Ok`, so the cell is initialized and the write is
+        // synchronized to this thread, either because this call performed it or because the
+        // `Acquire` load that observed `COMPLETE` did.
         Ok(unsafe { self.get_unchecked() })
     }
 

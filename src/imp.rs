@@ -18,12 +18,18 @@ const INCOMPLETE: u8 = 0x0;
 const RUNNING: u8 = 0x1;
 const COMPLETE: u8 = 0x2;
 
-// Why do we need `T: Send`?
-// Thread A creates a `OnceCell` and shares it with
-// scoped thread B, which fills the cell, which is
-// then destroyed by A. That is, destructor observes
-// a sent value.
+// SAFETY: the state machine hands write access to the value to at most one caller at a time, and
+// the `Release` store that ends the `RUNNING` state synchronizes that write with every `Acquire`
+// load that reads it. Sharing the cell across threads is therefore sound whenever `T` itself can
+// be shared and sent.
+//
+// `T: Send` is needed on top of `T: Sync` because the value can cross threads without the cell
+// itself moving: thread A creates a `OnceCell` and shares it with scoped thread B, which fills the
+// cell, which is then destroyed by A. That is, A's destructor observes a value sent from B.
 unsafe impl<T: Sync + Send> Sync for OnceCell<T> {}
+
+// SAFETY: moving the cell to another thread moves the `T` it may hold, which `T: Send` allows. The
+// state atomic can be sent unconditionally.
 unsafe impl<T: Send> Send for OnceCell<T> {}
 
 impl<T: RefUnwindSafe + UnwindSafe> RefUnwindSafe for OnceCell<T> {}
@@ -86,11 +92,14 @@ impl<T> OnceCell<T> {
             //   important for safety.
             // - finally, if it returns Ok, we store the value and the `Guard` then stores
             //   `COMPLETE` with `Release`, which synchronizes with the `Acquire` loads.
+            // SAFETY: `try_initialize_inner` runs this closure at most once, so `f` has not been
+            // taken yet.
             let f = unsafe { f.take().unwrap_unchecked() };
             match f() {
+                // SAFETY: winning the compare-exchange gave this caller exclusive access to the
+                // slot, and no panic can happen between the write and the cell being marked as
+                // initialized.
                 Ok(value) => unsafe {
-                    // Safe b/c we have a unique access and no panic may happen
-                    // until the cell is marked as initialized.
                     debug_assert!((*slot).is_none());
                     *slot = Some(value);
                     true
@@ -124,7 +133,8 @@ impl<T> OnceCell<T> {
     /// Gets the mutable reference to the underlying value.
     /// Returns `None` if the cell is empty.
     pub(crate) fn get_mut(&mut self) -> Option<&mut T> {
-        // Safe b/c we have an exclusive access
+        // SAFETY: `&mut self` rules out any other access to the slot, including an in-progress
+        // initialization, which would need a shared reference to the cell.
         let slot: &mut Option<T> = unsafe { &mut *self.value.get() };
         slot.as_mut()
     }
