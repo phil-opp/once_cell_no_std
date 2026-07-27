@@ -1,12 +1,9 @@
-use core::{
-    cell::UnsafeCell,
-    panic::{RefUnwindSafe, UnwindSafe},
-    sync::atomic::{AtomicU8, Ordering},
-};
+use core::panic::{RefUnwindSafe, UnwindSafe};
 
 use crate::{
     CellState,
     error::{ConcurrentInitialization, InitError},
+    loom::{AtomicU8, Ordering, UnsafeCell},
 };
 
 pub(crate) struct OnceCell<T> {
@@ -36,12 +33,16 @@ impl<T: RefUnwindSafe + UnwindSafe> RefUnwindSafe for OnceCell<T> {}
 impl<T: UnwindSafe> UnwindSafe for OnceCell<T> {}
 
 impl<T> OnceCell<T> {
-    pub(crate) const fn new() -> OnceCell<T> {
-        OnceCell { state: AtomicU8::new(INCOMPLETE), value: UnsafeCell::new(None) }
+    const_fn! {
+        pub(crate) const fn new() -> OnceCell<T> {
+            OnceCell { state: AtomicU8::new(INCOMPLETE), value: UnsafeCell::new(None) }
+        }
     }
 
-    pub(crate) const fn with_value(value: T) -> OnceCell<T> {
-        OnceCell { state: AtomicU8::new(COMPLETE), value: UnsafeCell::new(Some(value)) }
+    const_fn! {
+        pub(crate) const fn with_value(value: T) -> OnceCell<T> {
+            OnceCell { state: AtomicU8::new(COMPLETE), value: UnsafeCell::new(Some(value)) }
+        }
     }
 
     /// Whether the cell holds a value.
@@ -79,7 +80,7 @@ impl<T> OnceCell<T> {
     {
         let mut f = Some(f);
         let mut res: Result<(), E> = Ok(());
-        let slot: *mut Option<T> = self.value.get();
+        let value = &self.value;
         try_initialize_inner(&self.state, &mut || {
             // We are calling a user-supplied function and need to be careful.
             // - if it returns Err, the `Guard` resets the state to `INCOMPLETE` and we return
@@ -100,11 +101,11 @@ impl<T> OnceCell<T> {
                 // SAFETY: winning the compare-exchange gave this caller exclusive access to the
                 // slot, and no panic can happen between the write and the cell being marked as
                 // initialized.
-                Ok(value) => unsafe {
+                Ok(new) => value.with_mut(|slot| unsafe {
                     debug_assert!((*slot).is_none());
-                    *slot = Some(value);
+                    *slot = Some(new);
                     true
-                },
+                }),
                 Err(err) => {
                     res = Err(err);
                     false
@@ -125,10 +126,7 @@ impl<T> OnceCell<T> {
         debug_assert!(self.is_initialized());
         // SAFETY: the caller guarantees that the cell is initialized, so the slot holds a `Some`
         // that no one is writing to, and that the write is synchronized to this thread.
-        unsafe {
-            let slot = &*self.value.get();
-            slot.as_ref().unwrap_unchecked()
-        }
+        self.value.with(|slot| unsafe { (*slot).as_ref().unwrap_unchecked() })
     }
 
     /// Gets the mutable reference to the underlying value.
@@ -136,8 +134,7 @@ impl<T> OnceCell<T> {
     pub(crate) fn get_mut(&mut self) -> Option<&mut T> {
         // SAFETY: `&mut self` rules out any other access to the slot, including an in-progress
         // initialization, which would need a shared reference to the cell.
-        let slot: &mut Option<T> = unsafe { &mut *self.value.get() };
-        slot.as_mut()
+        self.value.with_mut(|slot| unsafe { (*slot).as_mut() })
     }
 
     /// Consumes this `OnceCell`, returning the wrapped value.
@@ -203,6 +200,7 @@ fn try_initialize_inner(
     }
 }
 
+#[cfg(not(loom))]
 #[test]
 fn test_size() {
     use core::mem::size_of;

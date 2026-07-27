@@ -100,7 +100,22 @@
 
 use core::{fmt, mem};
 
+/// Defines a function that is `const` everywhere except under `--cfg loom`, whose atomics cannot
+/// be constructed in a const context. The body is written once.
+macro_rules! const_fn {
+    ($(#[$attr:meta])* $vis:vis const fn $($rest:tt)*) => {
+        $(#[$attr])*
+        #[cfg(not(loom))]
+        $vis const fn $($rest)*
+
+        $(#[$attr])*
+        #[cfg(loom)]
+        $vis fn $($rest)*
+    };
+}
+
 mod imp;
+mod loom;
 pub mod error;
 
 use imp::OnceCell as Imp;
@@ -354,14 +369,18 @@ impl<T: PartialEq> PartialEq for OnceCell<T> {
 impl<T: Eq> Eq for OnceCell<T> {}
 
 impl<T> OnceCell<T> {
-    /// Creates a new empty cell.
-    pub const fn new() -> OnceCell<T> {
-        OnceCell(Imp::new())
+    const_fn! {
+        /// Creates a new empty cell.
+        pub const fn new() -> OnceCell<T> {
+            OnceCell(Imp::new())
+        }
     }
 
-    /// Creates a new initialized cell.
-    pub const fn with_value(value: T) -> OnceCell<T> {
-        OnceCell(Imp::with_value(value))
+    const_fn! {
+        /// Creates a new initialized cell.
+        pub const fn with_value(value: T) -> OnceCell<T> {
+            OnceCell(Imp::with_value(value))
+        }
     }
 
     /// Returns whether the cell is initialized.

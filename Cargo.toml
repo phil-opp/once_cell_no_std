@@ -22,5 +22,13 @@ exclude = ["/.github", "/.devcontainer", "/rustfmt.toml"]
 [dev-dependencies]
 regex = "1.10.6"
 
+# `loom` replaces the atomics and the `UnsafeCell` in `imp` to exhaustively explore thread
+# interleavings. It is only pulled in under `--cfg loom`; see `tests/loom_model.rs`.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--generate-link-to-definition"]
