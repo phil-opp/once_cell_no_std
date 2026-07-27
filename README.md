@@ -17,45 +17,84 @@ use once_cell_no_std::OnceCell;
 
 // `new` is a `const fn`, so a cell can live in a `static`
 static CELL: OnceCell<u32> = OnceCell::new();
+assert_eq!(CELL.get(), None);
 
 // `set` takes `&self`, so it works on a non-mutable `static`
-assert_eq!(CELL.set(92), Ok(()));
+CELL.set(92).unwrap();
 assert_eq!(CELL.get(), Some(&92));
 
-// a second write is refused, and hands the value back instead of dropping it
-assert_eq!(CELL.set(62).unwrap_err().into_rejected_value(), 62);
+// the cell keeps its first value, later updates are rejected. The value that was not written is
+// handed back to the caller instead of being dropped.
+assert_eq!(CELL.set(1).unwrap_err().into_rejected_value(), 1);
 ```
 
-## Example
+## Initializing on first use
+
+`get_or_insert` combines the two steps above: it writes the value if the cell is still empty, and
+either way hands out a reference to whatever ends up stored. `get_or_init` does the same for a value
+that has to be computed by a closure.
 
 ```rust
-use std::env;
-
 use once_cell_no_std::OnceCell;
 
-#[derive(Debug)]
-pub struct Logger {
-    // ...
-}
-static INSTANCE: OnceCell<Logger> = OnceCell::new();
+static CELL: OnceCell<u32> = OnceCell::new();
 
-impl Logger {
-    pub fn global() -> &'static Logger {
-        INSTANCE.get().expect("logger is not initialized")
-    }
+// `get_or_insert` returns an `Err` on concurrent initialization by another caller. This crate
+// never blocks/spins, so you have to decide yourself how to handle this (e.g. panic or retry in
+// a loop).
+let stored = match CELL.get_or_insert(92) {
+    Ok(insertion) => insertion.stored(),
+    Err(_) => panic!("concurrent initialization"),
+};
+assert_eq!(stored, &92);
 
-    fn from_cli(args: env::Args) -> Result<Logger, std::io::Error> {
-        // ... parse `args` ...
-        Ok(Logger {})
-    }
-}
+// the cell still keeps its first value, so a later one is handed back
+let insertion = CELL.get_or_insert(1).unwrap();
+assert_eq!(insertion.into_rejected_value(), Some(1));
+assert_eq!(insertion.stored(), &92); // still the previous value
 
-fn main() {
-    let logger = Logger::from_cli(env::args()).unwrap();
-    INSTANCE.set(logger).unwrap();
-    // use `Logger::global()` from now on
-}
+// the closure only runs if the cell is still empty
+assert_eq!(CELL.get_or_init(|| unreachable!()), Ok(&92));
 ```
+
+## Waiting for a concurrent initialization
+
+Since this crate never blocks, waiting is something the caller opts into rather than something that
+happens by default. Every method that can run into a concurrent initialization reports it as an
+explicit error, so a caller that wants to wait can simply retry:
+
+```rust
+use once_cell_no_std::{OnceCell, error::ConcurrentInitialization};
+
+/// Returns the value of the cell, initializing it with `init` if it is still empty.
+///
+/// Spins until the value is available if another caller is initializing the cell.
+fn get_or_spin<T>(cell: &OnceCell<T>, mut init: impl FnMut() -> T) -> &T {
+    loop {
+        // `&mut init` is passed instead of `init` so that it survives for the next attempt
+        match cell.get_or_init(&mut init) {
+            Ok(value) => return value,
+            // another caller is initializing the cell: retry in a busy loop
+            Err(ConcurrentInitialization) => core::hint::spin_loop(),
+        }
+    }
+}
+
+let cell = OnceCell::new();
+assert_eq!(get_or_spin(&cell, || "Hello, World!"), &"Hello, World!");
+// the init function is not called for an already initialized cell
+assert_eq!(get_or_spin(&cell, || unreachable!()), &"Hello, World!");
+```
+
+This is the lazy initialization that [`spin::Once`] and the [`lazy_static`] crate (with its
+`spin_no_std` feature) provide for `no_std` environments. The advantage of building it yourself is
+that the strategy stays yours, and spinning is not always the right one.
+
+A spinning caller is hard to tell apart from one doing useful work, so a scheduler may keep running
+it in place of the very caller it is waiting for. [Spinlocks Considered Harmful][spinharm] makes the
+case in full. Waiting for an interrupt, yielding to the scheduler, or reporting the error upwards
+may suit your system better. This crate enables you to switch to one of those (later) without
+changing your cell type.
 
 ## Related crates
 
@@ -82,6 +121,9 @@ The following table compares `once_cell_no_std::OnceCell` against the [`core::ce
 
 For more related crates, check out the [README of `once_cell`](https://github.com/matklad/once_cell?tab=readme-ov-file#related-crates).
 
+[spinharm]: https://matklad.github.io/2020/01/02/spinlocks-considered-harmful.html
+[`spin::Once`]: https://docs.rs/spin/latest/spin/once/struct.Once.html
+[`lazy_static`]: https://docs.rs/lazy_static/latest/lazy_static/
 [unsync-once-cell]: https://docs.rs/once_cell/1.21.3/once_cell/unsync/struct.OnceCell.html
 [sync-once-cell]: https://docs.rs/once_cell/1.21.3/once_cell/sync/struct.OnceCell.html
 [`core::cell::OnceCell`]: https://doc.rust-lang.org/stable/core/cell/struct.OnceCell.html

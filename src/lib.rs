@@ -150,46 +150,14 @@ impl<'a, T> Insertion<'a, T> {
 ///
 /// Since this type never blocks, it is up to the caller to decide what to do when it runs into a
 /// concurrent initialization. Every method that can run into it reports it as an explicit error,
-/// so a caller that wants to wait can simply retry:
-///
-/// ```
-/// use once_cell_no_std::{error::ConcurrentInitialization, OnceCell};
-///
-/// /// Returns the value of the cell, initializing it with `init` if it is still empty.
-/// ///
-/// /// Spins until the value is available if another caller is initializing the cell.
-/// fn get_or_spin<T>(cell: &OnceCell<T>, mut init: impl FnMut() -> T) -> &T {
-///     loop {
-///         // `&mut init` is passed instead of `init` so that it survives for the next attempt
-///         match cell.get_or_init(&mut init) {
-///             Ok(value) => return value,
-///             // another caller is initializing the cell: retry in a busy loop
-///             Err(ConcurrentInitialization) => core::hint::spin_loop(),
-///         }
-///     }
-/// }
-///
-/// let cell = OnceCell::new();
-/// assert_eq!(get_or_spin(&cell, || "Hello, World!"), &"Hello, World!");
-/// // the init function is not called for an already initialized cell
-/// assert_eq!(get_or_spin(&cell, || unreachable!()), &"Hello, World!");
-/// ```
-///
-/// Note that this spins, which is only appropriate if the initialization is short and the
-/// execution context allows it. Depending on the system, waiting for an interrupt, yielding to a
-/// scheduler, or reporting the error to the caller might be the better choice.
-///
-/// The above spinning helper is similar to the lazy initialization that
-/// [`spin::Once`] and the [`lazy_static`] crate (with its `spin_no_std` feature) provide for
-/// `no_std` environments. The advantage of using this crate is that you can easily switch to a
-/// custom wait strategy later (e.g. wait for next interrupt instead of busy-looping).
+/// so a caller that wants to wait can simply retry. See
+/// [Waiting for a concurrent initialization](crate#waiting-for-a-concurrent-initialization) for a
+/// spin-retry helper, how it compares to `spin::Once` and `lazy_static`, and when spinning is the
+/// wrong choice.
 ///
 /// If the value already exists instead of being computed by an init function, use
-/// [`set`](Self::set) or [`get_or_insert`](Self::get_or_insert) in the same way: their errors hand the value
-/// back, so the retry does not need to clone it.
-///
-/// [`spin::Once`]: https://docs.rs/spin/latest/spin/once/struct.Once.html
-/// [`lazy_static`]: https://docs.rs/lazy_static/latest/lazy_static/
+/// [`set`](Self::set) or [`get_or_insert`](Self::get_or_insert) in the same way: their errors hand
+/// the value back, so the retry does not need to clone it.
 pub struct OnceCell<T>(Imp<T>);
 
 impl<T> Default for OnceCell<T> {
