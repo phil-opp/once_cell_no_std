@@ -62,6 +62,7 @@ pub enum InitError<E> {
 impl<E> InitError<E> {
     /// Returns the error of the init function, or `None` for a
     /// [`ConcurrentInitialization`](Self::ConcurrentInitialization) error.
+    #[must_use]
     pub fn init_function_error(self) -> Option<E> {
         match self {
             InitError::InitFunctionFailed(error) => Some(error),
@@ -118,6 +119,7 @@ impl<T> SetError<T> {
     ///
     /// This is the value that was handed to [`OnceCell::set`](crate::OnceCell::set), never the one
     /// stored in the cell: a `OnceCell` does not give up a value it has accepted.
+    #[must_use]
     pub fn into_rejected_value(self) -> T {
         match self {
             SetError::AlreadyInitialized(value) | SetError::ConcurrentInitialization(value) => {
@@ -172,6 +174,7 @@ pub struct InsertError<T>(pub(crate) T);
 
 impl<T> InsertError<T> {
     /// Returns the value that was not inserted into the cell.
+    #[must_use]
     pub fn into_rejected_value(self) -> T {
         self.0
     }

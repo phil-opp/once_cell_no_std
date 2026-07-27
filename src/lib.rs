@@ -100,6 +100,7 @@ impl<'a, T> Insertion<'a, T> {
     /// [`AlreadyInitialized`](Self::AlreadyInitialized). In both cases it is the value that
     /// [`OnceCell::get`] returns from now on, since an initialized cell keeps its value.
     #[inline]
+    #[must_use]
     pub fn stored(&self) -> &'a T {
         match self {
             Insertion::Inserted(stored) | Insertion::AlreadyInitialized { stored, .. } => stored,
@@ -108,12 +109,14 @@ impl<'a, T> Insertion<'a, T> {
 
     /// Returns whether the value was inserted into the cell.
     #[inline]
+    #[must_use]
     pub fn was_inserted(&self) -> bool {
         matches!(self, Insertion::Inserted(_))
     }
 
     /// Returns the value that was not inserted, or `None` if it was.
     #[inline]
+    #[must_use]
     pub fn into_rejected_value(self) -> Option<T> {
         match self {
             Insertion::Inserted(_) => None,
@@ -240,6 +243,7 @@ impl<T> OnceCell<T> {
     const_fn! {
         /// Creates a new empty cell.
         #[inline]
+        #[must_use]
         pub const fn new() -> OnceCell<T> {
             OnceCell(Imp::new())
         }
@@ -248,6 +252,7 @@ impl<T> OnceCell<T> {
     const_fn! {
         /// Creates a new initialized cell.
         #[inline]
+        #[must_use]
         pub const fn with_value(value: T) -> OnceCell<T> {
             OnceCell(Imp::with_value(value))
         }
@@ -274,6 +279,7 @@ impl<T> OnceCell<T> {
     /// assert!(cell.is_initialized());
     /// ```
     #[inline]
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.0.is_initialized()
     }
@@ -305,6 +311,7 @@ impl<T> OnceCell<T> {
     /// assert_eq!(cell.get(), Some(&92));
     /// ```
     #[inline]
+    #[must_use]
     pub fn get(&self) -> Option<&T> {
         self.get_or_reason().ok()
     }
@@ -352,6 +359,7 @@ impl<T> OnceCell<T> {
     /// assert_eq!(cell.get(), Some(&"hello"));
     /// ```
     #[inline]
+    #[must_use]
     pub fn state(&self) -> CellState {
         self.0.state()
     }
@@ -377,6 +385,7 @@ impl<T> OnceCell<T> {
     /// cell = OnceCell::new();
     /// ```
     #[inline]
+    #[must_use]
     pub fn get_mut(&mut self) -> Option<&mut T> {
         self.0.get_mut()
     }
@@ -389,6 +398,7 @@ impl<T> OnceCell<T> {
     /// Caller must ensure that the cell is in initialized state, and that
     /// the contents are acquired by (synchronized to) this thread.
     #[inline]
+    #[must_use]
     pub unsafe fn get_unchecked(&self) -> &T {
         // SAFETY: the caller guarantees that the cell is initialized and synchronized to this
         // thread, which is exactly what the inner method requires.
