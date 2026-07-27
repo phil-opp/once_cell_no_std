@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- `loom` is a dev-dependency again, so it no longer appears in the dependency graph or `Cargo.lock`
+  of crates that depend on this one
+
 ## 0.2.0 – 2026-07-27
 
 This release reworks how failures are reported. Every fallible method used to return a nested

@@ -23,8 +23,10 @@ exclude = ["/.github", "/.devcontainer", "/ci", "/rustfmt.toml"]
 regex = "1.10.6"
 
 # `loom` replaces the atomics and the `UnsafeCell` in `imp` to exhaustively explore thread
-# interleavings. It is only pulled in under `--cfg loom`; see `tests/loom_model.rs`.
-[target.'cfg(loom)'.dependencies]
+# interleavings; see `src/loom_tests.rs`. It is a dev-dependency so that it stays out of the
+# dependency graph of anyone who depends on this crate, and the code that uses it is gated on
+# `all(test, loom)` rather than `loom` alone, because only test builds may use dev-dependencies.
+[target.'cfg(loom)'.dev-dependencies]
 loom = "0.7"
 
 [lints.rust]

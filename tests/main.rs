@@ -1,7 +1,3 @@
-// Not built under `--cfg loom`: these tests use `OnceCell::new`/`with_value` in `static`s, which
-// are not `const` when loom supplies the atomics. See `loom_model.rs` for the loom tests.
-#![cfg(not(loom))]
-
 use std::{
     sync::{
         Barrier,

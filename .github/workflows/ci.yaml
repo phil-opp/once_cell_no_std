@@ -94,10 +94,10 @@ jobs:
     runs-on: ubuntu-latest
 
     # Miri samples thread interleavings; loom enumerates them. It swaps in its own atomics and
-    # `UnsafeCell`, so only the loom test target is built under this cfg.
+    # `UnsafeCell`, so the loom models live in the library and run as unit tests.
     steps:
       - uses: actions/checkout@v5
-      - run: cargo test --release --test loom_model
+      - run: cargo test --release --lib
         env:
           RUSTFLAGS: --cfg loom
 
